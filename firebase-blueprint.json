@@ -1,0 +1,252 @@
+{
+  "entities": {
+    "MCC": {
+      "title": "MCC",
+      "description": "Milk Collection Center",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "location": { "type": "string" },
+        "startupDate": { "type": "string", "format": "date" },
+        "status": { "type": "string", "enum": ["Active", "Coming Soon", "Planned", "Inactive"] },
+        "manager": { "type": "string" },
+        "cashier": { "type": "string" }
+      },
+      "required": ["name", "location", "status"]
+    },
+    "User": {
+      "title": "User",
+      "description": "System user with role-based access",
+      "type": "object",
+      "properties": {
+        "fullName": { "type": "string" },
+        "username": { "type": "string" },
+        "role": { "type": "string", "enum": ["Super User", "Admin", "Cashier", "Grader", "Supervisor", "Manager", "Director", "Factory Clerk", "Viewer"] },
+        "mccIds": { "type": "array", "items": { "type": "string" } },
+        "status": { "type": "string", "enum": ["pending", "active", "inactive"] },
+        "phone": { "type": "string" },
+        "photo": { "type": "string" }
+      },
+      "required": ["fullName", "username", "role", "status"]
+    },
+    "Seller": {
+      "title": "Seller",
+      "description": "Farmer or milk supplier",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "location": { "type": "string" },
+        "category": { "type": "string" },
+        "mccId": { "type": "string" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["name", "mccId"]
+    },
+    "DailyRegisterEntry": {
+      "title": "DailyRegisterEntry",
+      "description": "Daily milk intake record",
+      "type": "object",
+      "properties": {
+        "sellerId": { "type": "string" },
+        "mccId": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "quantity": { "type": "number" },
+        "unit": { "type": "string", "enum": ["Litres", "KG"] },
+        "pricePerUnit": { "type": "number" },
+        "amount": { "type": "number" },
+        "status": { "type": "string", "enum": ["PAID", "UNPAID"] },
+        "remarks": { "type": "string" }
+      },
+      "required": ["sellerId", "mccId", "date", "quantity", "pricePerUnit", "amount", "status"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Station expense record",
+      "type": "object",
+      "properties": {
+        "mccId": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "description": { "type": "string" },
+        "receiptNo": { "type": "string" },
+        "quantity": { "type": "number" },
+        "amountPerUnit": { "type": "number" },
+        "total": { "type": "number" },
+        "approvedBy": { "type": "string" }
+      },
+      "required": ["mccId", "date", "description", "quantity", "amountPerUnit", "total", "approvedBy"]
+    },
+    "MoneyReceived": {
+      "title": "MoneyReceived",
+      "description": "Funds received at the station",
+      "type": "object",
+      "properties": {
+        "mccId": { "type": "string" },
+        "sender": { "type": "string" },
+        "purpose": { "type": "string" },
+        "refNo": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "mode": { "type": "string", "enum": ["Bank Transfer", "Mobile Money", "Cash"] },
+        "amountReceived": { "type": "number" },
+        "amountUsed": { "type": "number" },
+        "balance": { "type": "number" },
+        "notes": { "type": "string" }
+      },
+      "required": ["mccId", "sender", "purpose", "date", "mode", "amountReceived"]
+    },
+    "MilkCanIssued": {
+      "title": "MilkCanIssued",
+      "description": "Record of milk cans issued to sellers",
+      "type": "object",
+      "properties": {
+        "mccId": { "type": "string" },
+        "sellerName": { "type": "string" },
+        "phone": { "type": "string" },
+        "capacity": { "type": "string", "enum": ["30L", "50L"] },
+        "quantity": { "type": "number" },
+        "dateIssued": { "type": "string", "format": "date" },
+        "status": { "type": "string", "enum": ["Taken", "Returned"] },
+        "issuedBy": { "type": "string" },
+        "remarks": { "type": "string" }
+      },
+      "required": ["mccId", "sellerName", "capacity", "quantity", "dateIssued", "status"]
+    },
+    "MilkCanInventory": {
+      "title": "MilkCanInventory",
+      "description": "Inventory of milk cans at an MCC",
+      "type": "object",
+      "properties": {
+        "mccId": { "type": "string" },
+        "capacity": { "type": "string", "enum": ["30L", "50L"] },
+        "totalQuantity": { "type": "number" },
+        "availableQuantity": { "type": "number" }
+      },
+      "required": ["mccId", "capacity", "totalQuantity", "availableQuantity"]
+    },
+    "TruckQA": {
+      "title": "TruckQA",
+      "description": "Record of truck dispatch and quality assurance",
+      "type": "object",
+      "properties": {
+        "mccId": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "truckReg": { "type": "string" },
+        "driverName": { "type": "string" },
+        "driverPhone": { "type": "string" },
+        "litresLoaded": { "type": "number" },
+        "weightKg": { "type": "number" },
+        "tempAtLoading": { "type": "number" },
+        "sealNo": { "type": "string" },
+        "organoleptic": { "type": "string" },
+        "ph": { "type": "number" },
+        "alcoholTest": { "type": "string" },
+        "density": { "type": "number" },
+        "resazurin": { "type": "string" },
+        "h2o2": { "type": "string" },
+        "neutralizers": { "type": "string" },
+        "clotOnBoiling": { "type": "string" },
+        "antibiotic": { "type": "string" },
+        "qtyReceived": { "type": "number" },
+        "qtyRejected": { "type": "number" },
+        "grader": { "type": "string" },
+        "remarks": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["mccId", "date", "truckReg", "driverName", "litresLoaded", "weightKg", "tempAtLoading", "ph", "density"]
+    },
+    "Reject": {
+      "title": "Reject",
+      "description": "Record of rejected milk",
+      "type": "object",
+      "properties": {
+        "sellerName": { "type": "string" },
+        "mccId": { "type": "string" },
+        "time": { "type": "string" },
+        "litersRejected": { "type": "number" },
+        "temp": { "type": "number" },
+        "phAcidity": { "type": "string" },
+        "rejectionReason": { "type": "string", "enum": ["A", "D", "S", "T", "C", "M"] },
+        "testCode": { "type": "string", "enum": ["AT", "LT", "MT", "pH", "ST"] },
+        "actionTaken": { "type": "string" },
+        "remarks": { "type": "string" },
+        "date": { "type": "string", "format": "date" }
+      },
+      "required": ["sellerName", "mccId", "time", "litersRejected", "rejectionReason", "testCode", "date"]
+    },
+    "Driver": {
+      "title": "Driver",
+      "description": "Record of milk tanker driver",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "tankerReg": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "phone", "tankerReg"]
+    },
+    "presence": {
+      "title": "User Presence",
+      "description": "Tracks user online status",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "username": { "type": "string" },
+        "fullName": { "type": "string" },
+        "lastSeen": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["online", "offline"] }
+      },
+      "required": ["uid", "username", "lastSeen", "status"]
+    }
+  },
+  "firestore": {
+    "/mccs/{mccId}": {
+      "schema": "MCC",
+      "description": "Collection of Milk Collection Centers"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Collection of system users"
+    },
+    "/sellers/{sellerId}": {
+      "schema": "Seller",
+      "description": "Collection of milk sellers/farmers"
+    },
+    "/daily_register/{entryId}": {
+      "schema": "DailyRegisterEntry",
+      "description": "Collection of daily milk intake records"
+    },
+    "/expenses/{expenseId}": {
+      "schema": "Expense",
+      "description": "Collection of station expenses"
+    },
+    "/money_received/{mrId}": {
+      "schema": "MoneyReceived",
+      "description": "Collection of funds received"
+    },
+    "/milk_cans/{canIssueId}": {
+      "schema": "MilkCanIssued",
+      "description": "Collection of milk cans issued"
+    },
+    "/milk_can_inventory/{inventoryId}": {
+      "schema": "MilkCanInventory",
+      "description": "Inventory of milk cans at MCCs"
+    },
+    "/truck_qa/{qaId}": {
+      "schema": "TruckQA",
+      "description": "Collection of truck dispatch and QA records"
+    },
+    "/rejects/{rejectId}": {
+      "schema": "Reject",
+      "description": "Collection of rejected milk records"
+    },
+    "/drivers/{driverId}": {
+      "schema": "Driver",
+      "description": "Collection of milk tanker drivers"
+    },
+    "presence": {
+      "schema": { "$ref": "presence" },
+      "description": "Tracks online status of users"
+    }
+  }
+}

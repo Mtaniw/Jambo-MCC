@@ -1,0 +1,159 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: mccs
+    // Fields: name (string), location (string), startupDate (string), status (string), manager (string), cashier (string)
+    //
+    // Collection: users
+    // Fields: fullName (string), username (string), role (string), mccIds (list), status (string), phone (string), photo (string)
+    //
+    // Collection: sellers
+    // Fields: name (string), phone (string), location (string), category (string), mccId (string), active (bool)
+    //
+    // Collection: daily_register
+    // Fields: sellerId (string), mccId (string), date (string), quantity (number), unit (string), pricePerUnit (number), amount (number), status (string), remarks (string)
+    //
+    // Collection: expenses
+    // Fields: mccId (string), date (string), description (string), receiptNo (string), quantity (number), amountPerUnit (number), total (number), approvedBy (string)
+    //
+    // Collection: money_received
+    // Fields: mccId (string), sender (string), purpose (string), refNo (string), date (string), mode (string), amountReceived (number), amountUsed (number), balance (number), notes (string)
+    //
+    // Collection: milk_cans
+    // Fields: mccId (string), sellerName (string), phone (string), capacity (string), quantity (number), dateIssued (string), status (string), issuedBy (string), remarks (string)
+    //
+    // Collection: rejects
+    // Fields: sellerName (string), mccId (string), time (string), litersRejected (number), temp (number), phAcidity (string), rejectionReason (string), testCode (string), actionTaken (string), remarks (string), date (string)
+    //
+    // Collection: presence
+    // Fields: uid (string), username (string), fullName (string), lastSeen (timestamp), status (string)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.lower() == 'admin' || 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.lower() == 'super user')) ||
+        request.auth.token.email.lower() == "mtaniwambura@gmail.com"
+      );
+    }
+
+    function hasRole(role) {
+      return isAuthenticated() && 
+             (isAdmin() || (
+               exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.lower() == role.lower()
+             ));
+    }
+
+    function isAssignedToMCC(mccId) {
+      return isAuthenticated() && (
+        isAdmin() || 
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         (mccId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.mccIds || 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.lower() == 'viewer' ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.lower() == 'supervisor' ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.lower() == 'manager' ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.lower() == 'director'))
+      );
+    }
+
+    function isValidString(val, min, max) {
+      return val is string && val.size() >= min && val.size() <= max;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      allow update: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /mccs/{mccId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /sellers/{sellerId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || hasRole('Cashier') || hasRole('Supervisor');
+    }
+
+    match /daily_register/{entryId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || hasRole('Cashier') || hasRole('Grader') || hasRole('Supervisor');
+    }
+
+    match /expenses/{expenseId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || hasRole('Cashier');
+    }
+
+    match /money_received/{mrId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || hasRole('Cashier') || hasRole('Grader') || hasRole('Supervisor');
+    }
+
+    match /truck_qa/{qaId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || hasRole('Grader') || hasRole('Supervisor') || hasRole('Factory Clerk');
+    }
+
+    match /drivers/{driverId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /milk_cans/{canId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || hasRole('Cashier') || hasRole('Grader') || hasRole('Supervisor');
+    }
+
+    match /milk_can_inventory/{inventoryId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || hasRole('Cashier') || hasRole('Supervisor') || hasRole('Grader');
+    }
+
+    match /rejects/{rejectId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAdmin() || hasRole('Grader') || hasRole('Cashier') || hasRole('Supervisor');
+      allow delete: if isAdmin();
+    }
+
+    match /presence/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && request.auth.uid == userId;
+    }
+
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Default deny
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

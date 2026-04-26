@@ -1,0 +1,420 @@
+import React, { useState, useMemo } from 'react';
+import { signInWithPopup, GoogleAuthProvider, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
+import { doc, getDoc, setDoc, updateDoc, getDocs, query, collection, limit } from 'firebase/firestore';
+import { auth, db } from '../firebase';
+import { useNavigate } from 'react-router-dom';
+import { LogIn, UserPlus, ShieldCheck, AlertCircle, CheckCircle2, Info, Eye, EyeOff } from 'lucide-react';
+import { cn } from '../lib/utils';
+import { Logo } from '../components/Logo';
+
+const LOGO_URL = "https://lh3.googleusercontent.com/aida/ADBb0uiCdrgZRYj1Imqfwxw4sPIxAsPSjWWx9Pr0aWPDVa5-_Rm1bTwdZ2TLFhW-9ZAB_si9aC0BQ7OWnieEDClcJUNnVYZzCYGEOjCz46Rk3kz9jlvRTOYiGQbxtD6JkkLePDVYyPSa7uVt_Pn-CX089J9DKeBzfM7WtFQYcyTlaKUlN2Wwq8U5CzbopOmTC6RxHGJ2jHxaMWLhsCZWoJszc9TiUnsh8yKObLs_z8gAyDRt_1eCr6CAfRAoctphD9HyqNGn5mbYYfZvzw";
+
+export default function Login() {
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [fullName, setFullName] = useState('');
+  const [username, setUsername] = useState('');
+  const [role, setRole] = useState('Cashier');
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
+
+  const passwordStrength = useMemo(() => {
+    if (!password) return 0;
+    let strength = 0;
+    if (password.length >= 8) strength += 1;
+    if (/[A-Z]/.test(password)) strength += 1;
+    if (/[0-9]/.test(password)) strength += 1;
+    if (/[^A-Za-z0-9]/.test(password)) strength += 1;
+    return strength;
+  }, [password]);
+
+  const strengthLabel = ['Weak', 'Fair', 'Good', 'Strong', 'Very Strong'][passwordStrength];
+  const strengthColor = ['bg-red-500', 'bg-orange-500', 'bg-yellow-500', 'bg-green-500', 'bg-blue-500'][passwordStrength];
+
+  const validateEmail = (email: string) => {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  };
+
+  const getFriendlyErrorMessage = (code: string) => {
+    switch (code) {
+      case 'auth/user-not-found': return 'No account found with this email.';
+      case 'auth/wrong-password': return 'Incorrect password. Please try again.';
+      case 'auth/email-already-in-use': return 'This email is already registered.';
+      case 'auth/weak-password': return 'Password should be at least 6 characters.';
+      case 'auth/invalid-email': return 'Please enter a valid email address.';
+      case 'auth/network-request-failed': return 'Network error. Please check your connection.';
+      default: return 'An unexpected error occurred. Please try again.';
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const provider = new GoogleAuthProvider();
+      const result = await signInWithPopup(auth, provider);
+      const user = result.user;
+
+      const docRef = doc(db, 'users', user.uid);
+      const docSnap = await getDoc(docRef);
+
+      const isFirstAdmin = user.email?.toLowerCase() === 'mtaniwambura@gmail.com';
+      
+      if (!docSnap.exists()) {
+        const usersSnap = await getDocs(query(collection(db, 'users'), limit(1)));
+        const noUsersExist = usersSnap.empty;
+
+        await setDoc(docRef, {
+          fullName: user.displayName || 'New User',
+          username: user.email?.split('@')[0] || 'user',
+          role: (isFirstAdmin || noUsersExist) ? 'Super User' : 'Cashier',
+          mccIds: [],
+          status: (isFirstAdmin || noUsersExist) ? 'active' : 'pending',
+          email: user.email,
+          createdAt: new Date().toISOString()
+        });
+      } else if (isFirstAdmin) {
+        // Ensure the specific admin email always has the correct role and status
+        await updateDoc(docRef, {
+          role: 'Super User',
+          status: 'active'
+        });
+      }
+
+      if (isFirstAdmin) {
+        navigate('/admin');
+      } else {
+        navigate('/');
+      }
+    } catch (err: any) {
+      setError(getFriendlyErrorMessage(err.code));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEmailAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setSuccess('');
+
+    if (!validateEmail(email)) {
+      setError('Please enter a valid email address.');
+      return;
+    }
+
+    if (isRegistering && passwordStrength < 2) {
+      setError('Please choose a stronger password.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      if (isRegistering) {
+        const result = await createUserWithEmailAndPassword(auth, email, password);
+        const isFirstAdmin = email.toLowerCase() === 'mtaniwambura@gmail.com';
+        
+        const usersSnap = await getDocs(query(collection(db, 'users'), limit(1)));
+        const noUsersExist = usersSnap.empty;
+
+        await setDoc(doc(db, 'users', result.user.uid), {
+          fullName,
+          username: username || email.split('@')[0],
+          role: (isFirstAdmin || noUsersExist) ? 'Super User' : role,
+          mccIds: [],
+          status: (isFirstAdmin || noUsersExist) ? 'active' : 'pending',
+          email,
+          createdAt: new Date().toISOString()
+        });
+        setSuccess((isFirstAdmin || noUsersExist) ? 'Super User account created! You can now sign in.' : 'Account created! Please wait for admin approval.');
+      } else {
+        const result = await signInWithEmailAndPassword(auth, email, password);
+        const isFirstAdmin = email.toLowerCase() === 'mtaniwambura@gmail.com';
+        
+        if (isFirstAdmin) {
+          // Force update role and status for the primary admin email on every login
+          await updateDoc(doc(db, 'users', result.user.uid), {
+            role: 'Super User',
+            status: 'active'
+          });
+          navigate('/admin');
+        } else {
+          const docSnap = await getDoc(doc(db, 'users', result.user.uid));
+          if (docSnap.exists() && (docSnap.data().role === 'Super User' || docSnap.data().role === 'Admin')) {
+            navigate('/admin');
+          } else {
+            navigate('/');
+          }
+        }
+      }
+    } catch (err: any) {
+      setError(getFriendlyErrorMessage(err.code));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!validateEmail(email)) {
+      setError('Please enter your email address first.');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    setSuccess('');
+    try {
+      await sendPasswordResetEmail(auth, email);
+      setSuccess('Password reset email sent! Please check your inbox.');
+      setTimeout(() => setShowForgotPassword(false), 5000);
+    } catch (err: any) {
+      setError(getFriendlyErrorMessage(err.code));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-surface flex items-center justify-center relative overflow-hidden">
+      {/* Background Split */}
+      <div className="absolute inset-0 z-0 flex flex-col md:flex-row">
+        <div className="w-full md:w-1/2 bg-gradient-to-br from-primary via-primary-container to-primary-fixed-dim">
+          <div 
+            className="h-full w-full opacity-20 bg-cover bg-center" 
+            style={{ backgroundImage: "url('https://picsum.photos/seed/factory/1920/1080')" }}
+          ></div>
+        </div>
+        <div className="hidden md:block md:w-1/2 bg-surface-container-low"></div>
+      </div>
+
+      {/* Login Card */}
+      <div className="relative z-10 w-full max-w-4xl px-6 py-12 flex flex-col md:flex-row items-stretch gap-0 md:shadow-2xl rounded-xl overflow-hidden">
+        {/* Sidebar */}
+        <div className="md:w-2/5 bg-primary p-8 md:p-12 flex flex-col justify-between text-white border-b md:border-b-0 md:border-r border-white/10">
+          <div>
+            <Logo variant="white" className="h-20 w-auto mb-4" />
+            <div className="h-1 w-12 bg-secondary-container mb-8"></div>
+            <p className="text-lg leading-relaxed opacity-90 font-medium">MCC Management System</p>
+            <p className="text-sm font-light opacity-60">v1.0</p>
+          </div>
+          <div className="mt-12">
+            <div className="flex items-center gap-3 bg-white/10 p-4 rounded-lg">
+              <ShieldCheck className="text-secondary-container" size={24} />
+              <div>
+                <p className="text-sm font-bold">Secure Access</p>
+                <p className="text-[10px] uppercase tracking-widest opacity-70">Role-Based Authentication</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Form */}
+        <div className="md:flex-1 bg-white p-8 md:p-12">
+          <div className="mb-10">
+            <h2 className="text-3xl font-extrabold text-on-surface mb-2">
+              {showForgotPassword ? 'Reset Password' : isRegistering ? 'Karibu! 👋' : 'Karibu Tena! 👋'}
+            </h2>
+            <p className="text-on-surface-variant">
+              {showForgotPassword 
+                ? 'Enter your email to receive a reset link' 
+                : isRegistering 
+                  ? 'Unda akaunti yako mpya (Create account)' 
+                  : 'Ingia kwenye akaunti yako (Sign in)'}
+            </p>
+          </div>
+
+          {error && (
+            <div className="mb-6 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg flex items-center gap-2 text-sm">
+              <AlertCircle size={16} /> {error}
+            </div>
+          )}
+
+          {success && (
+            <div className="mb-6 p-3 bg-green-50 border border-green-200 text-green-700 rounded-lg flex items-center gap-2 text-sm">
+              <CheckCircle2 size={16} /> {success}
+            </div>
+          )}
+
+          {showForgotPassword ? (
+            <form onSubmit={handleForgotPassword} className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-sm font-semibold">Email Address</label>
+                <input
+                  required
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full px-4 py-2 bg-surface-container-low border-none rounded-lg focus:ring-2 focus:ring-primary/20"
+                  placeholder="email@example.com"
+                />
+              </div>
+              <button
+                disabled={loading}
+                type="submit"
+                className="w-full bg-primary text-white font-bold py-3 rounded-lg shadow-lg hover:shadow-primary/20 transition-all disabled:opacity-50"
+              >
+                {loading ? 'Sending...' : 'Send Reset Link'}
+              </button>
+              <button 
+                type="button"
+                onClick={() => setShowForgotPassword(false)}
+                className="w-full text-sm text-on-surface-variant hover:underline"
+              >
+                Back to Login
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleEmailAuth} className="space-y-4">
+              {isRegistering && (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-sm font-semibold">Full Name</label>
+                      <input
+                        required
+                        type="text"
+                        value={fullName}
+                        onChange={(e) => setFullName(e.target.value)}
+                        className="w-full px-4 py-2 bg-surface-container-low border-none rounded-lg focus:ring-2 focus:ring-primary/20"
+                        placeholder="John Doe"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-sm font-semibold">Username</label>
+                      <input
+                        required
+                        type="text"
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        className="w-full px-4 py-2 bg-surface-container-low border-none rounded-lg focus:ring-2 focus:ring-primary/20"
+                        placeholder="johndoe"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-sm font-semibold">Role</label>
+                    <select
+                      value={role}
+                      onChange={(e) => setRole(e.target.value)}
+                      className="w-full px-4 py-2 bg-surface-container-low border-none rounded-lg focus:ring-2 focus:ring-primary/20"
+                    >
+                      <option value="Cashier">Cashier</option>
+                      <option value="Quality Controller">Quality Controller</option>
+                      <option value="Supervisor">Supervisor</option>
+                      <option value="Manager">Manager</option>
+                      <option value="Director">Director</option>
+                      <option value="Factory Clerk">Factory Clerk</option>
+                      <option value="Viewer">Viewer</option>
+                    </select>
+                  </div>
+                </>
+              )}
+
+              <div className="space-y-1">
+                <label className="text-sm font-semibold">Email</label>
+                <input
+                  required
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full px-4 py-2 bg-surface-container-low border-none rounded-lg focus:ring-2 focus:ring-primary/20"
+                  placeholder="email@example.com"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex justify-between items-center">
+                  <label className="text-sm font-semibold">Password</label>
+                  {!isRegistering && (
+                    <button 
+                      type="button"
+                      onClick={() => setShowForgotPassword(true)}
+                      className="text-xs text-primary hover:underline"
+                    >
+                      Forgot Password?
+                    </button>
+                  )}
+                </div>
+                <div className="relative">
+                  <input
+                    required
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full px-4 py-2 bg-surface-container-low border-none rounded-lg focus:ring-2 focus:ring-primary/20"
+                    placeholder="••••••••"
+                  />
+                  <button 
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-surface"
+                  >
+                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
+                
+                {isRegistering && password && (
+                  <div className="space-y-1 mt-2">
+                    <div className="flex justify-between items-center text-[10px] font-bold uppercase opacity-60">
+                      <span>Strength: {strengthLabel}</span>
+                    </div>
+                    <div className="h-1 w-full bg-surface-container-low rounded-full overflow-hidden flex gap-0.5">
+                      {[1, 2, 3, 4].map((i) => (
+                        <div 
+                          key={i} 
+                          className={cn(
+                            "h-full flex-1 transition-all duration-500",
+                            i <= passwordStrength ? strengthColor : "bg-transparent"
+                          )}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <button
+                disabled={loading}
+                type="submit"
+                className="w-full bg-primary text-white font-bold py-3 rounded-lg shadow-lg hover:shadow-primary/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {loading ? 'Processing...' : isRegistering ? 'Sign Up' : 'Sign In'}
+                <LogIn size={18} />
+              </button>
+            </form>
+          )}
+
+          {!showForgotPassword && (
+            <div className="mt-6 flex flex-col gap-3">
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-outline-variant/20"></span></div>
+                <div className="relative flex justify-center text-xs uppercase"><span className="bg-white px-2 text-on-surface-variant">Or continue with</span></div>
+              </div>
+
+              <button
+                onClick={handleGoogleLogin}
+                disabled={loading}
+                className="w-full bg-white border border-outline-variant/30 text-on-surface font-semibold py-3 rounded-lg flex items-center justify-center gap-2 hover:bg-surface-container-low transition-all"
+              >
+                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-5 h-5" />
+                Google Login
+              </button>
+
+              <button
+                onClick={() => { setIsRegistering(!isRegistering); setError(''); setSuccess(''); }}
+                className="text-sm text-primary font-semibold text-center hover:underline"
+              >
+                {isRegistering ? 'Already have an account? Sign In' : "Don't have an account? Sign Up"}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,5 @@
+{
+  "name": "Jambo MCC Management System",
+  "description": "A full-stack digital operations platform for Jambo Food Products Limited Milk Collection Centers (MCC), featuring real-time tracking of milk intake, quality assurance, financial reporting, and role-based access control.",
+  "requestFramePermissions": []
+}

@@ -14,6 +14,7 @@ import {
   isWithinInterval
 } from 'date-fns';
 import { getTanzaniaDate, safeFormat } from '../lib/dateUtils';
+import { DateInput } from '../components/DateInput';
 import { getResazurinGrade } from '../lib/qualityConstants';
 import { ResazurinBadge } from '../components/ResazurinBadge';
 import * as XLSX from 'xlsx';
@@ -117,7 +118,7 @@ export default function TankerWeeklyReport() {
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Tanker Report');
-    XLSX.writeFile(wb, `Tanker_Report_${dateRange.start}_${dateRange.end}.xlsx`);
+    XLSX.writeFile(wb, `Tanker_Report_${safeFormat(dateRange.start, 'dd-MM-yyyy')}_${safeFormat(dateRange.end, 'dd-MM-yyyy')}.xlsx`);
   };
 
   const exportToPDF = () => {
@@ -135,9 +136,9 @@ export default function TankerWeeklyReport() {
       mccs.find(m => m.id === r.mccId)?.name || 'Unknown',
       safeFormat(r.date),
       r.receivedAt ? safeFormat(r.receivedAt) : 'Pending',
-      r.litresLoaded.toFixed(1),
-      (r.qtyReceived || 0).toFixed(1),
-      (r.litresLoaded - (r.qtyReceived || 0)).toFixed(1),
+      formatNumber(r.litresLoaded, 2),
+      formatNumber(r.qtyReceived || 0, 2),
+      formatNumber(r.litresLoaded - (r.qtyReceived || 0), 2),
       r.driverName,
       r.truckReg
     ]);
@@ -162,8 +163,8 @@ export default function TankerWeeklyReport() {
         const tableData = reportData.rows.map(r => [
           safeFormat(r.date),
           mccs.find(m => m.id === r.mccId)?.name || 'Unknown',
-          r.litresLoaded.toFixed(1),
-          (r.qtyReceived || 0).toFixed(1),
+          formatNumber(r.litresLoaded, 2),
+          formatNumber(r.qtyReceived || 0, 2),
           r.truckReg
         ]);
         (doc as any).autoTable({
@@ -211,22 +212,18 @@ export default function TankerWeeklyReport() {
 
       <div className="bg-white p-4 rounded-xl border border-outline-variant/20 shadow-sm flex flex-wrap gap-4 items-end">
         <div className="w-48">
-          <label className="text-[10px] font-bold uppercase opacity-60 mb-1 block">From</label>
-          <input 
-            type="date"
+          <DateInput 
             value={dateRange.start}
-            onChange={e => setDateRange(prev => ({ ...prev, start: e.target.value }))}
-            className="w-full bg-surface-container-low border-none rounded-lg text-sm font-bold py-2 px-3 h-10 transition-colors focus:bg-surface-container-high"
+            onChange={val => setDateRange(prev => ({ ...prev, start: val }))}
+            label="From"
           />
         </div>
 
         <div className="w-48">
-          <label className="text-[10px] font-bold uppercase opacity-60 mb-1 block">To</label>
-          <input 
-            type="date"
+          <DateInput 
             value={dateRange.end}
-            onChange={e => setDateRange(prev => ({ ...prev, end: e.target.value }))}
-            className="w-full bg-surface-container-low border-none rounded-lg text-sm font-bold py-2 px-3 h-10 transition-colors focus:bg-surface-container-high"
+            onChange={val => setDateRange(prev => ({ ...prev, end: val }))}
+            label="To"
           />
         </div>
 
@@ -245,15 +242,15 @@ export default function TankerWeeklyReport() {
         <div className="ml-auto flex items-center gap-6">
           <div className="text-right">
             <p className="text-[10px] font-bold uppercase text-on-surface-variant">Total Sent</p>
-            <p className="font-bold text-primary">{formatNumber(reportData.totals.sent, 1)} L</p>
+            <p className="font-bold text-primary">{formatNumber(reportData.totals.sent, 2)} L</p>
           </div>
           <div className="text-right">
             <p className="text-[10px] font-bold uppercase text-on-surface-variant">Total Received</p>
-            <p className="font-bold text-green-600">{formatNumber(reportData.totals.received, 1)} L</p>
+            <p className="font-bold text-green-600">{formatNumber(reportData.totals.received, 2)} L</p>
           </div>
           <div className="text-right">
             <p className="text-[10px] font-bold uppercase text-on-surface-variant">Total Diff</p>
-            <p className="font-bold text-error">{formatNumber(reportData.totals.diff, 1)} L</p>
+            <p className="font-bold text-error">{formatNumber(reportData.totals.diff, 2)} L</p>
           </div>
         </div>
       </div>
@@ -306,11 +303,11 @@ export default function TankerWeeklyReport() {
                   </div>
                   <div className="text-center">
                     <p className="text-[10px] font-bold uppercase text-on-surface-variant">Sent</p>
-                    <p className="font-bold text-sm">{formatNumber(row.litresLoaded, 1)} L</p>
+                    <p className="font-bold text-sm">{formatNumber(row.litresLoaded, 2)} L</p>
                   </div>
                   <div className="text-center">
                     <p className="text-[10px] font-bold uppercase text-on-surface-variant">Received</p>
-                    <p className="font-bold text-green-600 text-sm">{formatNumber(row.qtyReceived, 1)} L</p>
+                    <p className="font-bold text-green-600 text-sm">{formatNumber(row.qtyReceived, 2)} L</p>
                   </div>
                   <div className="text-right min-w-[100px]">
                     <p className="text-[10px] font-bold uppercase text-on-surface-variant">Status</p>
@@ -340,7 +337,7 @@ export default function TankerWeeklyReport() {
                       <div className="p-3 bg-white rounded-lg border border-outline-variant/10">
                         <p className="text-[10px] font-bold uppercase text-on-surface-variant mb-1">Loading Temp</p>
                         <p className={cn("font-bold", row.tempAtLoading > 6 ? "text-error" : "text-on-surface")}>
-                          {formatNumber(row.tempAtLoading, 1)}°C
+                          {formatNumber(row.tempAtLoading, 2)}°C
                         </p>
                       </div>
                       <div className="p-3 bg-white rounded-lg border border-outline-variant/10">
@@ -409,18 +406,18 @@ export default function TankerWeeklyReport() {
                       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
                         <div className="p-3 bg-white rounded-lg border border-outline-variant/10">
                           <p className="text-[10px] font-bold uppercase text-on-surface-variant mb-1">Received Qty</p>
-                          <p className="font-bold text-green-600">{formatNumber(row.qtyReceived, 1)} L</p>
+                          <p className="font-bold text-green-600">{formatNumber(row.qtyReceived, 2)} L</p>
                         </div>
                         <div className="p-3 bg-white rounded-lg border border-outline-variant/10">
                           <p className="text-[10px] font-bold uppercase text-on-surface-variant mb-1">Difference</p>
                           <p className={cn("font-bold", (row.litresLoaded - (row.qtyReceived || 0)) !== 0 ? "text-error" : "text-green-600")}>
-                            {formatNumber(row.litresLoaded - (row.qtyReceived || 0), 1)} L
+                            {formatNumber(row.litresLoaded - (row.qtyReceived || 0), 2)} L
                           </p>
                         </div>
                         <div className="p-3 bg-white rounded-lg border border-outline-variant/10">
                           <p className="text-[10px] font-bold uppercase text-on-surface-variant mb-1">Factory Temp</p>
                           <p className={cn("font-bold", row.factoryTemp > 6 ? "text-error" : "text-on-surface")}>
-                            {row.factoryTemp ? `${formatNumber(row.factoryTemp, 1)}°C` : 'N/A'}
+                            {row.factoryTemp ? `${formatNumber(row.factoryTemp, 2)}°C` : 'N/A'}
                           </p>
                         </div>
                         <div className="p-3 bg-white rounded-lg border border-outline-variant/10">
@@ -438,7 +435,7 @@ export default function TankerWeeklyReport() {
                         <div className="p-3 bg-white rounded-lg border border-outline-variant/10">
                           <p className="text-[10px] font-bold uppercase text-on-surface-variant mb-1">Rejected Qty</p>
                           <p className={cn("font-bold", row.qtyRejected > 0 ? "text-error" : "text-on-surface")}>
-                            {formatNumber(row.qtyRejected, 1)} L
+                            {formatNumber(row.qtyRejected, 2)} L
                           </p>
                         </div>
 

@@ -178,22 +178,22 @@ export default function MonthlyReport() {
       r.no,
       `${r.weekLabel} (${r.dateRange})`,
       r.sellers,
-      r.totalLiters.toFixed(1),
-      r.paidLiters.toFixed(1),
-      r.paidAmount.toLocaleString(),
-      r.unpaidAmount.toLocaleString(),
-      r.totalAmount.toLocaleString()
+      formatNumber(r.totalLiters, 2),
+      formatNumber(r.paidLiters, 2),
+      formatNumber(r.paidAmount, 0),
+      formatNumber(r.unpaidAmount, 0),
+      formatNumber(r.totalAmount, 0)
     ]);
 
     tableData.push([
       '',
       'TOTALS',
       reportData.totals.sellers,
-      reportData.totals.totalLiters.toFixed(1),
-      reportData.totals.paidLiters.toFixed(1),
-      reportData.totals.paidAmount.toLocaleString(),
-      reportData.totals.unpaidAmount.toLocaleString(),
-      reportData.totals.totalAmount.toLocaleString()
+      formatNumber(reportData.totals.totalLiters, 2),
+      formatNumber(reportData.totals.paidLiters, 2),
+      formatNumber(reportData.totals.paidAmount, 0),
+      formatNumber(reportData.totals.unpaidAmount, 0),
+      formatNumber(reportData.totals.totalAmount, 0)
     ]);
 
     (doc as any).autoTable({
@@ -315,8 +315,8 @@ export default function MonthlyReport() {
                     <span className="block text-[10px] text-on-surface-variant font-normal uppercase tracking-tighter">{row.dateRange}</span>
                   </td>
                   <td className="px-6 py-4 text-sm text-center">{row.sellers}</td>
-                  <td className="px-6 py-4 text-sm text-right font-medium">{formatNumber(row.totalLiters, 1)}</td>
-                  <td className="px-6 py-4 text-sm text-right text-green-600">{formatNumber(row.paidLiters, 1)}</td>
+                  <td className="px-6 py-4 text-sm text-right font-medium">{formatNumber(row.totalLiters, 2)}</td>
+                  <td className="px-6 py-4 text-sm text-right text-green-600">{formatNumber(row.paidLiters, 2)}</td>
                   <td className="px-6 py-4 text-sm text-right font-bold">{formatNumber(row.paidAmount, 0)}</td>
                   <td className="px-6 py-4 text-sm text-right text-red-600">{formatNumber(row.unpaidAmount, 0)}</td>
                   <td className="px-6 py-4 text-sm text-right font-black text-primary">{formatNumber(row.totalAmount, 0)}</td>
@@ -334,8 +334,8 @@ export default function MonthlyReport() {
               <tr className="font-black text-on-surface">
                 <td colSpan={2} className="px-6 py-4 text-right uppercase tracking-wider text-xs">Monthly Totals</td>
                 <td className="px-6 py-4 text-center">{reportData.totals.sellers}</td>
-                <td className="px-6 py-4 text-right">{formatNumber(reportData.totals.totalLiters, 1)}</td>
-                <td className="px-6 py-4 text-right text-green-600">{formatNumber(reportData.totals.paidLiters, 1)}</td>
+                <td className="px-6 py-4 text-right">{formatNumber(reportData.totals.totalLiters, 2)}</td>
+                <td className="px-6 py-4 text-right text-green-600">{formatNumber(reportData.totals.paidLiters, 2)}</td>
                 <td className="px-6 py-4 text-right">{formatNumber(reportData.totals.paidAmount, 0)}</td>
                 <td className="px-6 py-4 text-right text-red-600">{formatNumber(reportData.totals.unpaidAmount, 0)}</td>
                 <td className="px-6 py-4 text-right text-primary text-lg">{formatNumber(reportData.totals.totalAmount, 0)}</td>
@@ -346,7 +346,7 @@ export default function MonthlyReport() {
       </div>
 
       <div className="hidden print:block mt-10 text-center text-[10px] text-on-surface-variant">
-        Report generated on {format(getTanzaniaDate(), 'PPP pp')} | Jambo MCC Management System
+        Report generated on {format(getTanzaniaDate(), 'dd/MM/yyyy HH:mm')} | Jambo MCC Management System
       </div>
     </div>
   );

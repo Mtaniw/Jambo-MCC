@@ -125,7 +125,7 @@ export default function Admin() {
     phone: '', 
     location: '', 
     category: 'Farmer', 
-    mccId: '', 
+    mccIds: [] as string[], 
     active: true 
   });
 
@@ -147,10 +147,14 @@ export default function Admin() {
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'drivers'));
     let sellersQuery = query(collection(db, 'sellers'));
     if (profile?.role !== 'Super User' && profile?.mccIds?.length > 0) {
-      sellersQuery = query(collection(db, 'sellers'), where('mccId', 'in', profile.mccIds));
+      sellersQuery = query(collection(db, 'sellers'), where('mccIds', 'array-contains-any', profile.mccIds));
     }
     const unsubSellers = onSnapshot(sellersQuery, (snap) => {
-      setSellers(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setSellers(snap.docs.map(doc => {
+        const data = doc.data();
+        const mccIds = data.mccIds || (data.mccId ? [data.mccId] : []);
+        return { id: doc.id, ...data, mccIds };
+      }));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'sellers'));
     const unsubSettings = onSnapshot(doc(db, 'settings', 'global_config'), (snap) => {
       if (snap.exists()) {
@@ -314,7 +318,7 @@ export default function Admin() {
     try {
       await addDoc(collection(db, 'sellers'), { ...sellerForm, createdAt: new Date().toISOString() });
       setIsAddingSeller(false);
-      setSellerForm({ name: '', phone: '', location: '', category: 'Farmer', mccId: '', active: true });
+      setSellerForm({ name: '', phone: '', location: '', category: 'Farmer', mccIds: [], active: true });
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'sellers');
       alert('Failed to save seller. Please try again.');
@@ -330,7 +334,7 @@ export default function Admin() {
         phone: selectedSeller.phone,
         location: selectedSeller.location,
         category: selectedSeller.category,
-        mccId: selectedSeller.mccId,
+        mccIds: selectedSeller.mccIds || [],
         active: selectedSeller.active
       });
       setSelectedSeller(null);
@@ -859,10 +863,27 @@ export default function Admin() {
                 <option value="Group">Group</option>
                 <option value="Agent">Agent</option>
               </select>
-              <select value={sellerForm.mccId} onChange={e => setSellerForm({...sellerForm, mccId: e.target.value})} className="bg-surface-container-low border-none rounded-lg p-2" required>
-                <option value="">Select MCC</option>
-                {mccs.map(mcc => <option key={mcc.id} value={mcc.id}>{mcc.name}</option>)}
-              </select>
+              <div className="space-y-1 lg:col-span-3">
+                <label className="text-xs font-bold uppercase opacity-60">MCC Assignments</label>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 p-3 bg-surface-container-low rounded-lg border border-outline-variant/10">
+                  {mccs.map(mcc => (
+                    <label key={mcc.id} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-white/50 p-1 rounded">
+                      <input 
+                        type="checkbox" 
+                        checked={sellerForm.mccIds.includes(mcc.id)} 
+                        onChange={e => {
+                          const newIds = e.target.checked 
+                            ? [...sellerForm.mccIds, mcc.id]
+                            : sellerForm.mccIds.filter(id => id !== mcc.id);
+                          setSellerForm({...sellerForm, mccIds: newIds});
+                        }}
+                        className="w-4 h-4 rounded text-primary"
+                      />
+                      {mcc.name}
+                    </label>
+                  ))}
+                </div>
+              </div>
               <div className="flex gap-2 lg:col-span-3 justify-end">
                 <button type="button" onClick={() => setIsAddingSeller(false)} className="px-4 py-2">Cancel</button>
                 <button type="submit" className="bg-primary text-white px-6 py-2 rounded-lg font-bold">Save Seller</button>
@@ -876,7 +897,7 @@ export default function Admin() {
                   <th className="px-6 py-3 w-16">S/N</th>
                   <th className="px-6 py-3">Seller Name</th>
                   <th className="px-6 py-3">Phone</th>
-                  <th className="px-6 py-3">MCC</th>
+                  <th className="px-6 py-3">MCC(s)</th>
                   <th className="px-6 py-3">Status</th>
                   <th className="px-6 py-3 text-right">Actions</th>
                 </tr>
@@ -893,7 +914,16 @@ export default function Admin() {
                     </td>
                     <td className="px-6 py-4 text-sm font-bold group-hover:text-primary transition-colors">{seller.name}</td>
                     <td className="px-6 py-4 text-sm">{seller.phone}</td>
-                    <td className="px-6 py-4 text-sm">{mccs.find(m => m.id === seller.mccId)?.name || 'N/A'}</td>
+                    <td className="px-6 py-4 text-sm">
+                      <div className="flex flex-wrap gap-1">
+                        {seller.mccIds?.map((id: string) => (
+                          <span key={id} className="text-[9px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-bold">
+                            {mccs.find(m => m.id === id)?.name || id}
+                          </span>
+                        ))}
+                        {(!seller.mccIds || seller.mccIds.length === 0) && <span className="text-[9px] opacity-40 italic">None</span>}
+                      </div>
+                    </td>
                     <td className="px-6 py-4">
                       <span className={cn(
                         "px-2 py-1 rounded-full text-[10px] font-bold uppercase",
@@ -1211,15 +1241,28 @@ export default function Admin() {
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-bold uppercase tracking-wider opacity-60">MCC Assignment</label>
-                <select 
-                  value={selectedSeller.mccId} 
-                  onChange={e => setSelectedSeller({...selectedSeller, mccId: e.target.value})}
-                  className="w-full bg-surface-container-low border-none rounded-lg p-3 text-sm"
-                  required
-                >
-                  {mccs.map(mcc => <option key={mcc.id} value={mcc.id}>{mcc.name}</option>)}
-                </select>
+                <label className="text-xs font-bold uppercase tracking-wider opacity-60">MCC Assignments</label>
+                <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto p-2 bg-surface-container-low rounded-lg">
+                  {mccs.map(mcc => (
+                    <label key={mcc.id} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-white/50 p-1 rounded">
+                      <input 
+                        type="checkbox" 
+                        checked={selectedSeller.mccIds?.includes(mcc.id)} 
+                        onChange={e => {
+                          let newIds = [...(selectedSeller.mccIds || [])];
+                          if (e.target.checked) {
+                            if (!newIds.includes(mcc.id)) newIds.push(mcc.id);
+                          } else {
+                            newIds = newIds.filter((id: string) => id !== mcc.id);
+                          }
+                          setSelectedSeller({...selectedSeller, mccIds: newIds});
+                        }}
+                        className="w-4 h-4 rounded text-primary"
+                      />
+                      {mcc.name}
+                    </label>
+                  ))}
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <input 

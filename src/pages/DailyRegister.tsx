@@ -4,12 +4,13 @@ import { db } from '../firebase';
 import { useAuth } from '../hooks/useAuth';
 import { useSearchParams } from 'react-router-dom';
 import { handleFirestoreError, OperationType } from '../lib/errorHandlers';
-import { Plus, Search, Filter, Download, Trash2, Edit2, Check, X, FileText, Table as TableIcon, FileDown, AlertCircle, Loader2, Calendar, History, Upload } from 'lucide-react';
+import { Plus, Search, Filter, Download, Trash2, Edit2, Check, X, FileText, Table as TableIcon, FileDown, AlertCircle, Loader2, Calendar, History, Upload, ChevronDown, TrendingUp, TrendingDown } from 'lucide-react';
 import { cn, formatNumber } from '../lib/utils';
 import { format, isWithinInterval, startOfDay, endOfDay, startOfWeek, startOfMonth } from 'date-fns';
 import { getTanzaniaTodayStr, parseTanzaniaDate, safeFormat, getTanzaniaMonthStartStr, getTanzaniaDate } from '../lib/dateUtils';
 import { TypeAhead } from '../components/TypeAhead';
 import { ImportModal } from '../components/ImportModal';
+import { DateInput } from '../components/DateInput';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
@@ -24,7 +25,7 @@ interface MCC {
 interface Seller {
   id: string;
   name: string;
-  mccId: string;
+  mccIds: string[];
   [key: string]: any;
 }
 
@@ -69,34 +70,41 @@ export default function DailyRegister() {
   const [sellerSearch, setSellerSearch] = useState('');
   const [showSellerDropdown, setShowSellerDropdown] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'date', direction: 'desc' });
+  const [sellerExistConfirm, setSellerExistConfirm] = useState<{ name: string, id: string } | null>(null);
 
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
   const isGlobalViewer = profile && ['Super User', 'Admin', 'Factory Clerk', 'Supervisor', 'Manager', 'Director'].includes(effectiveRole as string);
   const canWrite = profile && (profile.role === 'Admin' || !['Supervisor', 'Manager', 'Director'].includes(effectiveRole as string));
 
-  // Queries
-  const { data: mccs = [] } = useQuery<MCC[]>({
-    queryKey: ['mccs'],
-    queryFn: async () => {
-      const snap = await getDocs(collection(db, 'mccs'));
-      return snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as MCC));
-    }
-  });
+  // Consolidated Listeners
+  useEffect(() => {
+    if (!profile) return;
 
-  const { data: sellers = [] } = useQuery<Seller[]>({
-    queryKey: ['sellers'],
-    queryFn: async () => {
-      const snap = await getDocs(collection(db, 'sellers'));
-      return snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Seller));
-    }
-  });
+    const unsubMccs = onSnapshot(collection(db, 'mccs'), (snap) => {
+      queryClient.setQueryData(['mccs'], snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'mccs'));
 
-  const { data: globalPrice = 1200 } = useQuery<number>({
-    queryKey: ['settings', 'global_config'],
-    queryFn: async () => {
-      const snap = await getDoc(doc(db, 'settings', 'global_config'));
-      return snap.exists() ? snap.data().milkPrice : 1200;
-    }
-  });
+    const unsubSellers = onSnapshot(collection(db, 'sellers'), (snap) => {
+      queryClient.setQueryData(['sellers'], snap.docs.map(d => {
+        const data = d.data();
+        const mccIds = data.mccIds || (data.mccId ? [data.mccId] : []);
+        return { id: d.id, ...data, mccIds };
+      }));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'sellers'));
+
+    const unsubConfig = onSnapshot(doc(db, 'settings', 'global_config'), (snap) => {
+      if (snap.exists()) {
+        queryClient.setQueryData(['settings', 'global_config'], snap.data().milkPrice);
+      }
+    }, (err) => handleFirestoreError(err, OperationType.GET, 'settings/global_config'));
+
+    return () => {
+      unsubMccs();
+      unsubSellers();
+      unsubConfig();
+    };
+  }, [queryClient, profile]);
 
   useEffect(() => {
     if (period === 'custom') return;
@@ -115,36 +123,36 @@ export default function DailyRegister() {
   }, [period]);
 
   const queryKey = useMemo(() => 
-    ['daily_register', JSON.stringify(profile?.mccIds), startDate, endDate, isGlobalViewer],
-    [JSON.stringify(profile?.mccIds), startDate, endDate, isGlobalViewer]
+    ['daily_register', profile?.mccIds, startDate, endDate, isGlobalViewer],
+    [profile?.mccIds, startDate, endDate, isGlobalViewer]
   );
 
   const { data: entries = [], isLoading: entriesLoading, isPlaceholderData } = useQuery<Entry[]>({
     queryKey,
-    queryFn: async () => {
-      if (!profile) return [];
-      let q = query(collection(db, 'daily_register'));
-      if (!isGlobalViewer) {
-        if (profile.mccIds && profile.mccIds.length > 0) {
-          const mccNames = profile.mccIds.map(id => mccs.find(m => m.id === id)?.name).filter(Boolean);
-          const queryIds = [...profile.mccIds, ...mccNames];
-          q = query(q, where('mccId', 'in', queryIds.slice(0, 10)));
-        } else {
-          return [];
-        }
-      }
-      if (startDate) q = query(q, where('date', '>=', startDate));
-      if (endDate) q = query(q, where('date', '<=', endDate));
-      
-      const snap = await getDocs(q);
-      return snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Entry));
-    },
-    enabled: !!profile && (isGlobalViewer || mccs.length > 0),
-    staleTime: 1000 * 60 * 5, // 5 minutes cache
+    queryFn: () => [], // Handled by onSnapshot
+    enabled: false,
     placeholderData: keepPreviousData
   });
 
-  // Real-time Sync Effects
+  const { data: mccs = [] } = useQuery<MCC[]>({
+    queryKey: ['mccs'],
+    queryFn: () => [],
+    enabled: false
+  });
+
+  const { data: sellers = [] } = useQuery<Seller[]>({
+    queryKey: ['sellers'],
+    queryFn: () => [],
+    enabled: false
+  });
+
+  const { data: globalPrice = 1200 } = useQuery<number>({
+    queryKey: ['settings', 'global_config'],
+    queryFn: () => 1200,
+    enabled: false
+  });
+
+  // Real-time Sync Effects entry point
   useEffect(() => {
     if (!profile || !startDate || !endDate) return;
 
@@ -154,68 +162,16 @@ export default function DailyRegister() {
       where('date', '<=', endDate)
     );
 
+    if (!isGlobalViewer && profile.mccIds?.length > 0) {
+      // Note: mapping MCC IDs to names is done in useMemo filters for the UI, 
+      // but for the query we prefer strict IDs if possible.
+      // However, historically some records might have names as MCC IDs.
+      q = query(q, where('mccId', 'in', profile.mccIds.slice(0, 10)));
+    }
+
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const allFetched = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Entry));
-      
-      // If not global viewer, filter by user MCCs manually to avoid complex composite index requirement on Firestore
-      let filtered = allFetched;
-      if (!isGlobalViewer && profile.mccIds && profile.mccIds.length > 0) {
-        const mccNames = profile.mccIds.map(id => mccs.find(m => m.id === id)?.name).filter(Boolean);
-        const allowedIds = [...profile.mccIds, ...mccNames];
-        filtered = allFetched.filter(e => allowedIds.includes(e.mccId));
-      }
-
-      queryClient.setQueryData(queryKey, filtered);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'daily_register'));
-
-    return unsubscribe;
-  }, [queryClient, queryKey, profile, isGlobalViewer, mccs, startDate, endDate]);
-
-  useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, 'mccs'), (snapshot) => {
-      queryClient.setQueryData(['mccs'], snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MCC)));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'mccs'));
-    return unsubscribe;
-  }, [queryClient]);
-
-  useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, 'sellers'), (snapshot) => {
-      queryClient.setQueryData(['sellers'], snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Seller)));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'sellers'));
-    return unsubscribe;
-  }, [queryClient]);
-
-  useEffect(() => {
-    const unsubscribe = onSnapshot(doc(db, 'settings', 'global_config'), (snap) => {
-      if (snap.exists()) {
-        queryClient.setQueryData(['settings', 'global_config'], snap.data().milkPrice);
-      }
-    }, (error) => handleFirestoreError(error, OperationType.GET, 'settings/global_config'));
-    return unsubscribe;
-  }, [queryClient]);
-
-  const [isInitialLoading, setIsInitialLoading] = useState(true);
-
-  useEffect(() => {
-    if (!profile || mccs.length === 0) return;
-    let q = query(collection(db, 'daily_register'));
-    if (!isGlobalViewer) {
-      if (profile.mccIds.length > 0) {
-        const mccNames = profile.mccIds.map(id => mccs.find(m => m.id === id)?.name).filter(Boolean);
-        const queryIds = [...profile.mccIds, ...mccNames];
-        q = query(q, where('mccId', 'in', queryIds.slice(0, 10)));
-      } else {
-        setIsInitialLoading(false);
-        return;
-      }
-    }
-    if (startDate) q = query(q, where('date', '>=', startDate));
-    if (endDate) q = query(q, where('date', '<=', endDate));
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      queryClient.setQueryData(queryKey, 
-        snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Entry))
-      );
+      queryClient.setQueryData(queryKey, allFetched);
       setIsInitialLoading(false);
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'daily_register');
@@ -223,7 +179,7 @@ export default function DailyRegister() {
     });
 
     return unsubscribe;
-  }, [profile, isGlobalViewer, startDate, endDate, queryClient, queryKey, mccs]);
+  }, [queryClient, queryKey, profile, isGlobalViewer, startDate, endDate]);
 
   // Form State
   const [formData, setFormData] = useState({
@@ -255,7 +211,7 @@ export default function DailyRegister() {
       if (data.isManualSeller && data.manualSellerName) {
         const sellerRef = await addDoc(collection(db, 'sellers'), {
           name: data.manualSellerName,
-          mccId: data.mccId,
+          mccIds: [data.mccId],
           active: true,
           category: 'Individual',
           createdAt: new Date().toISOString(),
@@ -265,11 +221,15 @@ export default function DailyRegister() {
         finalManualSellerName = '';
       }
 
+      const seller = sellers.find(s => s.id === finalSellerId);
+      const resolvedSellerName = data.manualSellerName || seller?.name || '';
+
       const amount = Number(data.quantity) * Number(data.pricePerUnit);
       const entryData = {
         ...data,
         sellerId: finalSellerId,
         manualSellerName: finalManualSellerName,
+        resolvedSellerName,
         quantity: Number(data.quantity),
         pricePerUnit: Number(data.pricePerUnit),
         amount,
@@ -285,8 +245,28 @@ export default function DailyRegister() {
         });
       }
     },
+    onMutate: async (newData) => {
+      // Cancel any outgoing refetches
+      await queryClient.cancelQueries({ queryKey });
+
+      // Snapshot the previous value
+      const previousEntries = queryClient.getQueryData(queryKey);
+
+      // Optimistically update to the new value
+      if (editingId) {
+        queryClient.setQueryData(queryKey, (old: any) => 
+          old?.map((e: any) => e.id === editingId ? { ...e, ...newData } : e)
+        );
+      } else {
+        queryClient.setQueryData(queryKey, (old: any) => [
+          ...old,
+          { id: 'temp-id-' + Date.now(), ...newData, createdAt: new Date().toISOString() }
+        ]);
+      }
+
+      return { previousEntries };
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey });
       setSuccess(editingId ? "Record updated successfully!" : "Record saved successfully!");
       setIsAdding(false);
       setEditingId(null);
@@ -294,8 +274,14 @@ export default function DailyRegister() {
       setFormData(prev => ({ ...prev, quantity: '', remarks: '', manualSellerName: '', isManualSeller: false }));
       setTimeout(() => setSuccess(null), 3000);
     },
-    onError: (err: any) => {
+    onError: (err: any, _newEntry, context) => {
+      if (context?.previousEntries) {
+        queryClient.setQueryData(queryKey, context.previousEntries);
+      }
       setError("Failed to save record: " + err.message);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey });
     }
   });
 
@@ -309,14 +295,33 @@ export default function DailyRegister() {
       });
       await batch.commit();
     },
+    onMutate: async ({ ids, action }) => {
+      await queryClient.cancelQueries({ queryKey });
+      const previousEntries = queryClient.getQueryData(queryKey);
+
+      if (action === 'DELETE') {
+        queryClient.setQueryData(queryKey, (old: any) => old?.filter((e: any) => !ids.includes(e.id)));
+      } else {
+        queryClient.setQueryData(queryKey, (old: any) => 
+          old?.map((e: any) => ids.includes(e.id) ? { ...e, status: 'PAID' } : e)
+        );
+      }
+
+      return { previousEntries };
+    },
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey });
       setSuccess(`${variables.ids.length} records processed successfully!`);
       setSelectedIds([]);
       setTimeout(() => setSuccess(null), 3000);
     },
-    onError: (err: any) => {
+    onError: (err: any, _, context) => {
+      if (context?.previousEntries) {
+        queryClient.setQueryData(queryKey, context.previousEntries);
+      }
       setError("Bulk action failed: " + err.message);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey });
     }
   });
 
@@ -324,13 +329,24 @@ export default function DailyRegister() {
     mutationFn: async (id: string) => {
       await deleteDoc(doc(db, 'daily_register', id));
     },
+    onMutate: async (id) => {
+      await queryClient.cancelQueries({ queryKey });
+      const previousEntries = queryClient.getQueryData(queryKey);
+      queryClient.setQueryData(queryKey, (old: any) => old?.filter((e: any) => e.id !== id));
+      return { previousEntries };
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey });
       setSuccess("Record deleted successfully!");
       setTimeout(() => setSuccess(null), 3000);
     },
-    onError: (err: any) => {
+    onError: (err: any, _, context) => {
+      if (context?.previousEntries) {
+        queryClient.setQueryData(queryKey, context.previousEntries);
+      }
       setError("Delete failed: " + err.message);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey });
     }
   });
 
@@ -349,7 +365,7 @@ export default function DailyRegister() {
     if (!sellerSearch) return [];
     return sellers.filter(s => 
       s.name.toLowerCase().includes(sellerSearch.toLowerCase()) &&
-      (formData.mccId ? s.mccId === formData.mccId : true)
+      (formData.mccId ? (s.mccIds && s.mccIds.includes(formData.mccId)) : true)
     ).slice(0, 10);
   }, [sellers, sellerSearch, formData.mccId]);
 
@@ -379,12 +395,43 @@ export default function DailyRegister() {
     });
 
     return filtered.sort((a: any, b: any) => {
-      const dateA = new Date(a.date).getTime();
-      const dateB = new Date(b.date).getTime();
-      if (dateA !== dateB) return dateA - dateB;
+      const { key, direction } = sortConfig;
+      let valA: any;
+      let valB: any;
+
+      switch (key) {
+        case 'date':
+          valA = new Date(a.date).getTime();
+          valB = new Date(b.date).getTime();
+          break;
+        case 'seller':
+          valA = a.resolvedSellerName.toLowerCase();
+          valB = b.resolvedSellerName.toLowerCase();
+          break;
+        case 'quantity':
+          valA = Number(a.quantity);
+          valB = Number(b.quantity);
+          break;
+        case 'amount':
+          valA = Number(a.amount || (a.quantity * a.pricePerUnit));
+          valB = Number(b.amount || (b.quantity * b.pricePerUnit));
+          break;
+        case 'status':
+          valA = a.status;
+          valB = b.status;
+          break;
+        default:
+          valA = new Date(a.date).getTime();
+          valB = new Date(b.date).getTime();
+      }
+
+      if (valA < valB) return direction === 'asc' ? -1 : 1;
+      if (valA > valB) return direction === 'asc' ? 1 : -1;
+      
+      // Fallback to secondary sort by createdAt
       return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
     });
-  }, [entries, sellers, mccs, searchTerm, selectedMccId, selectedStatus]);
+  }, [entries, sellers, mccs, searchTerm, selectedMccId, selectedStatus, sortConfig]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -407,17 +454,57 @@ export default function DailyRegister() {
     }, { liters: 0, paidAmount: 0, unpaidAmount: 0, totalAmount: 0 });
   }, [filteredEntries]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent, skipSellerCheck = false) => {
     e.preventDefault();
     setError(null);
     setSuccess(null);
+
+    const qty = Number(formData.quantity);
+    const price = Number(formData.pricePerUnit);
+    const todayStr = getTanzaniaTodayStr();
 
     if ((!formData.sellerId && !formData.manualSellerName) || !formData.mccId || !formData.quantity || !formData.pricePerUnit) {
       setError("Please fill in all required fields.");
       return;
     }
 
+    if (qty <= 0) {
+      setError("Quantity must be a positive number.");
+      return;
+    }
+
+    if (price <= 0) {
+      setError("Price per unit must be a positive number.");
+      return;
+    }
+
+    if (formData.date > todayStr) {
+      setError("Date cannot be in the future.");
+      return;
+    }
+
+    // Check for existing seller if manual entry is used and we haven't skipped the check
+    if (formData.isManualSeller && formData.manualSellerName && !skipSellerCheck) {
+      const existingSeller = sellers.find(s => s.name.toLowerCase() === formData.manualSellerName.toLowerCase().trim());
+      if (existingSeller) {
+        setSellerExistConfirm({ name: existingSeller.name, id: existingSeller.id });
+        return;
+      }
+    }
+
     saveMutation.mutate(formData);
+  };
+
+  const handleSort = (key: string) => {
+    setSortConfig(prev => ({
+      key,
+      direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc'
+    }));
+  };
+
+  const SortIcon = ({ column }: { column: string }) => {
+    if (sortConfig.key !== column) return <ChevronDown size={12} className="opacity-20" />;
+    return sortConfig.direction === 'asc' ? <TrendingUp size={12} className="text-primary" /> : <TrendingDown size={12} className="text-primary" />;
   };
 
   const handleBulkAction = async (action: 'PAID' | 'DELETE') => {
@@ -516,8 +603,8 @@ export default function DailyRegister() {
       Date: entry.date,
       MCC: mccs.find(m => m.id === entry.mccId)?.name || 'Unknown',
       Seller: entry.manualSellerName || sellers.find(s => s.id === entry.sellerId)?.name || entry.sellerId,
-      Quantity: `${entry.quantity} ${entry.unit}`,
-      'Price/Unit': entry.pricePerUnit,
+      Quantity: `${formatNumber(entry.quantity, 2)} ${entry.unit}`,
+      'Price/Unit': formatNumber(entry.pricePerUnit, 0),
       Total: entry.quantity * entry.pricePerUnit,
       Status: entry.status
     }));
@@ -545,7 +632,7 @@ export default function DailyRegister() {
           row.Seller,
           row.Quantity,
           row['Price/Unit'],
-          row.Total.toLocaleString(),
+          formatNumber(row.Total, 0),
           row.Status
         ]),
         theme: 'grid',
@@ -586,7 +673,7 @@ export default function DailyRegister() {
                       </div>
                       <div className="text-right">
                         <p className="text-xs font-bold uppercase text-primary opacity-60">Price per Unit</p>
-                        <p className="text-lg font-black text-primary">TSh {item.price.toLocaleString()}</p>
+                        <p className="text-lg font-black text-primary">TSh {formatNumber(item.price, 0)}</p>
                       </div>
                     </div>
                   ))}
@@ -604,6 +691,49 @@ export default function DailyRegister() {
                 className="w-full py-3 bg-primary text-white rounded-xl font-bold shadow-lg hover:shadow-primary/20 transition-all"
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Seller Existence Confirmation */}
+      {sellerExistConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+          <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 mb-4 text-amber-600">
+              <AlertCircle size={24} />
+              <h2 className="text-lg font-bold">Seller Already Exists</h2>
+            </div>
+            <p className="text-sm text-on-surface-variant mb-6">
+              A seller named <span className="font-bold text-on-surface">"{sellerExistConfirm.name}"</span> is already registered in the system. 
+              Would you like to use the existing seller or continue with manual entry?
+            </p>
+            <div className="flex flex-col gap-2">
+              <button 
+                onClick={() => {
+                  setFormData({ ...formData, isManualSeller: false, sellerId: sellerExistConfirm.id, manualSellerName: '' });
+                  setSellerSearch(sellerExistConfirm.name);
+                  setSellerExistConfirm(null);
+                }}
+                className="w-full py-2 bg-primary text-white rounded-lg font-bold shadow-lg hover:bg-primary-container transition-all"
+              >
+                Use Existing Seller
+              </button>
+              <button 
+                onClick={() => {
+                  saveMutation.mutate(formData);
+                  setSellerExistConfirm(null);
+                }}
+                className="w-full py-2 bg-surface-container-high text-on-surface rounded-lg font-bold hover:bg-surface-container-highest transition-all"
+              >
+                Continue Manual Entry
+              </button>
+              <button 
+                onClick={() => setSellerExistConfirm(null)}
+                className="w-full py-2 font-bold text-on-surface-variant hover:underline mt-2"
+              >
+                Cancel
               </button>
             </div>
           </div>
@@ -727,7 +857,7 @@ export default function DailyRegister() {
               />
             ) : (
               <TypeAhead
-                items={sellers.filter(s => formData.mccId ? s.mccId === formData.mccId : true)}
+                items={sellers.filter(s => formData.mccId ? (s.mccIds && s.mccIds.includes(formData.mccId)) : true)}
                 onSelect={(seller) => {
                   setFormData({...formData, sellerId: seller.id});
                   setSellerSearch(seller.name);
@@ -737,7 +867,10 @@ export default function DailyRegister() {
                   setSellerSearch('');
                 }}
                 labelExtractor={(s) => s.name}
-                subLabelExtractor={(s) => mccs.find(m => m.id === s.mccId)?.name || ''}
+                subLabelExtractor={(s) => {
+                  if (!s.mccIds || s.mccIds.length === 0) return 'No MCC';
+                  return s.mccIds.map((id: string) => mccs.find(m => m.id === id)?.name).filter(Boolean).join(', ');
+                }}
                 placeholder="Type to search seller..."
                 defaultValue={sellerSearch}
                 required={!formData.isManualSeller}
@@ -745,13 +878,10 @@ export default function DailyRegister() {
             )}
           </div>
           <div className="space-y-1">
-            <label className="text-xs font-bold uppercase tracking-wider">Date</label>
-            <input 
-              type="date" 
+            <DateInput 
               value={formData.date} 
-              onChange={e => setFormData({...formData, date: e.target.value})}
-              className="w-full bg-surface-container-low border-none rounded-lg text-sm"
-              required
+              onChange={val => setFormData({...formData, date: val})}
+              label="Date"
             />
           </div>
           <div className="space-y-1">
@@ -815,7 +945,7 @@ export default function DailyRegister() {
             <div>
               <p className="text-[10px] font-bold uppercase text-primary opacity-70">Total Amount</p>
               <p className="text-xl font-black text-primary">
-                TSh {(Number(formData.quantity || 0) * Number(formData.pricePerUnit || 0)).toLocaleString()}
+                TSh {formatNumber(Number(formData.quantity || 0) * Number(formData.pricePerUnit || 0), 0)}
               </p>
             </div>
           </div>
@@ -836,7 +966,7 @@ export default function DailyRegister() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white p-4 rounded-xl border border-outline-variant/20 shadow-sm">
           <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Total Liters</p>
-          <p className="text-2xl font-black text-primary">{totals.liters.toFixed(1)} L</p>
+          <p className="text-2xl font-black text-primary">{formatNumber(totals.liters, 2)} L</p>
         </div>
         <div className="bg-white p-4 rounded-xl border border-outline-variant/20 shadow-sm">
           <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Amount Paid</p>
@@ -907,29 +1037,20 @@ export default function DailyRegister() {
                 ))}
               </div>
               <div className={cn(
-                "flex items-center gap-2 bg-surface-container-low rounded-lg px-3 py-2 border border-outline-variant/10 w-full md:w-auto overflow-x-auto transition-all",
+                "flex items-center gap-2 bg-surface-container-low rounded-lg p-1 border border-outline-variant/10 w-full md:w-auto overflow-x-auto transition-all",
                 period !== 'custom' && "opacity-50 pointer-events-none"
               )}>
-                <Calendar size={14} className="text-primary flex-shrink-0" />
-                <div className="flex items-center gap-1 flex-shrink-0">
-                  <span className="text-[10px] font-bold opacity-60">From:</span>
-                  <input 
-                    type="date" 
-                    value={startDate} 
-                    onChange={e => setStartDate(e.target.value)}
-                    className="bg-transparent border-none text-xs p-0 focus:ring-0 font-bold"
-                  />
-                </div>
-                <div className="w-px h-4 bg-outline-variant/30 mx-1 flex-shrink-0"></div>
-                <div className="flex items-center gap-1 flex-shrink-0">
-                  <span className="text-[10px] font-bold opacity-60">To:</span>
-                  <input 
-                    type="date" 
-                    value={endDate} 
-                    onChange={e => setEndDate(e.target.value)}
-                    className="bg-transparent border-none text-xs p-0 focus:ring-0 font-bold"
-                  />
-                </div>
+                <DateInput 
+                  value={startDate} 
+                  onChange={setStartDate}
+                  label="From"
+                />
+                <div className="w-px h-8 bg-outline-variant/30 self-end mb-1"></div>
+                <DateInput 
+                  value={endDate} 
+                  onChange={setEndDate}
+                  label="To"
+                />
               </div>
             </div>
             </div>
@@ -993,13 +1114,33 @@ export default function DailyRegister() {
                   )}
                 </th>
                 <th className="px-6 py-4 border-b border-outline-variant/10">#</th>
-                <th className="px-6 py-4 border-b border-outline-variant/10">Date</th>
+                <th className="px-6 py-4 border-b border-outline-variant/10 cursor-pointer hover:bg-surface-container-high transition-colors" onClick={() => handleSort('date')}>
+                  <div className="flex items-center gap-2">
+                    Date <SortIcon column="date" />
+                  </div>
+                </th>
                 <th className="px-6 py-4 border-b border-outline-variant/10">MCC</th>
-                <th className="px-6 py-4 border-b border-outline-variant/10">Seller</th>
-                <th className="px-6 py-4 border-b border-outline-variant/10">Quantity</th>
+                <th className="px-6 py-4 border-b border-outline-variant/10 cursor-pointer hover:bg-surface-container-high transition-colors" onClick={() => handleSort('seller')}>
+                  <div className="flex items-center gap-2">
+                    Seller <SortIcon column="seller" />
+                  </div>
+                </th>
+                <th className="px-6 py-4 border-b border-outline-variant/10 cursor-pointer hover:bg-surface-container-high transition-colors" onClick={() => handleSort('quantity')}>
+                  <div className="flex items-center gap-2">
+                    Quantity <SortIcon column="quantity" />
+                  </div>
+                </th>
                 <th className="px-6 py-4 border-b border-outline-variant/10">Price</th>
-                <th className="px-6 py-4 border-b border-outline-variant/10">Total</th>
-                <th className="px-6 py-4 border-b border-outline-variant/10">Status</th>
+                <th className="px-6 py-4 border-b border-outline-variant/10 cursor-pointer hover:bg-surface-container-high transition-colors" onClick={() => handleSort('amount')}>
+                  <div className="flex items-center gap-2">
+                    Total <SortIcon column="amount" />
+                  </div>
+                </th>
+                <th className="px-6 py-4 border-b border-outline-variant/10 cursor-pointer hover:bg-surface-container-high transition-colors" onClick={() => handleSort('status')}>
+                  <div className="flex items-center gap-2">
+                    Status <SortIcon column="status" />
+                  </div>
+                </th>
                 <th className="px-6 py-4 border-b border-outline-variant/10 text-right">Actions</th>
               </tr>
             </thead>
@@ -1021,7 +1162,7 @@ export default function DailyRegister() {
                   </td>
                   <td className="px-6 py-4 text-sm font-medium text-on-surface-variant">{(currentPage - 1) * pageSize + index + 1}</td>
                   <td className="px-6 py-4 text-sm">{safeFormat(entry.date, 'dd/MM/yyyy')}</td>
-                  <td className="px-6 py-4 text-sm">{mccs.find(m => m.id === entry.mccId)?.name || 'Unknown'}</td>
+                  <td className="px-6 py-4 text-sm font-bold">{mccs.find(m => m.id === entry.mccId)?.name || 'Unknown'}</td>
                   <td className="px-6 py-4 text-sm font-medium">
                     <div className="flex items-center gap-2 group relative">
                       <span className="cursor-help border-b border-dotted border-outline-variant/50 group-hover:text-primary transition-colors">
@@ -1034,7 +1175,7 @@ export default function DailyRegister() {
                           <div className="bg-on-surface text-surface text-[10px] p-2 rounded-lg shadow-xl min-w-[150px] border border-white/10">
                             <p className="font-bold border-b border-white/10 pb-1 mb-1">{entry.resolvedSellerName}</p>
                             <p className="opacity-80">Phone: {entry.sellerDetails.phone || 'N/A'}</p>
-                            <p className="opacity-80">MCC: {mccs.find(m => m.id === entry.sellerDetails?.mccId)?.name || 'N/A'}</p>
+                            <p className="opacity-80">MCC: {entry.sellerDetails?.mccIds ? entry.sellerDetails.mccIds.map((id: string) => mccs.find(m => m.id === id)?.name).filter(Boolean).join(', ') : 'N/A'}</p>
                             <div className="absolute top-full left-4 border-8 border-transparent border-t-on-surface"></div>
                           </div>
                         </div>
@@ -1051,8 +1192,8 @@ export default function DailyRegister() {
                       )}
                     </div>
                   </td>
-                  <td className="px-6 py-4 text-sm">{entry.quantity} {entry.unit}</td>
-                  <td className="px-6 py-4 text-sm">TSh {entry.pricePerUnit}</td>
+                  <td className="px-6 py-4 text-sm font-medium">{formatNumber(entry.quantity, 2)} {entry.unit}</td>
+                  <td className="px-6 py-4 text-sm font-medium">TSh {formatNumber(entry.pricePerUnit, 0)}</td>
                   <td className="px-6 py-4 text-sm font-bold">TSh {formatNumber(entry.amount || (entry.quantity * entry.pricePerUnit), 0)}</td>
                   <td className="px-6 py-4">
                     <span className={cn(
@@ -1133,7 +1274,7 @@ export default function DailyRegister() {
                         <div className="bg-on-surface text-surface text-[10px] p-2 rounded-lg shadow-xl min-w-[150px] border border-white/10">
                           <p className="font-bold border-b border-white/10 pb-1 mb-1">{entry.resolvedSellerName}</p>
                           <p className="opacity-80">Phone: {entry.sellerDetails.phone || 'N/A'}</p>
-                          <p className="opacity-80">MCC: {mccs.find(m => m.id === entry.sellerDetails?.mccId)?.name || 'N/A'}</p>
+                          <p className="opacity-80">MCC: {entry.sellerDetails?.mccIds ? entry.sellerDetails.mccIds.map((id: string) => mccs.find(m => m.id === id)?.name).filter(Boolean).join(', ') : 'N/A'}</p>
                           <div className="absolute top-full left-4 border-8 border-transparent border-t-on-surface"></div>
                         </div>
                       </div>
@@ -1150,7 +1291,7 @@ export default function DailyRegister() {
               </div>
               <div className="flex justify-between items-end">
                 <div className="space-y-1">
-                  <p className="text-xs text-on-surface-variant">Quantity: <span className="font-bold text-on-surface">{entry.quantity} {entry.unit}</span></p>
+                  <p className="text-xs text-on-surface-variant">Quantity: <span className="font-bold text-on-surface">{formatNumber(entry.quantity, 2)} {entry.unit}</span></p>
                   <p className="text-sm font-black text-primary">TSh {formatNumber(entry.amount || (entry.quantity * entry.pricePerUnit), 0)}</p>
                 </div>
                 {canWrite && (

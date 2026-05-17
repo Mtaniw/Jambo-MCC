@@ -6,6 +6,7 @@ import { Plus, Trash2, Edit2, X } from 'lucide-react';
 import { cn, formatNumber } from '../lib/utils';
 import { format, startOfMonth } from 'date-fns';
 import { getTanzaniaTodayStr, safeFormat, getTanzaniaDate } from '../lib/dateUtils';
+import { DateInput } from '../components/DateInput';
 import { handleFirestoreError, OperationType } from '../lib/errorHandlers';
 import { ImportModal } from '../components/ImportModal';
 import { Upload } from 'lucide-react';
@@ -18,7 +19,7 @@ export default function Expenses() {
   const [isAdding, setIsAdding] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [startDate, setStartDate] = useState(format(startOfMonth(getTanzaniaDate()), 'yyyy-MM-dd'));
+  const [startDate, setStartDate] = useState('2024-01-01');
   const [endDate, setEndDate] = useState(getTanzaniaTodayStr());
 
   const isGlobalViewer = profile && ['Super User', 'Admin', 'Factory Clerk', 'Supervisor', 'Manager', 'Director'].includes(effectiveRole as string);
@@ -165,7 +166,7 @@ export default function Expenses() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white p-6 rounded-xl border border-outline-variant/20 shadow-sm">
           <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-1">Total Station Expenses</p>
-          <p className="text-2xl font-black text-primary">TSh {totalExpenses.toLocaleString()}</p>
+          <p className="text-2xl font-black text-primary">TSh {formatNumber(totalExpenses, 0)}</p>
           <p className="text-[10px] text-on-surface-variant mt-2">Based on current filters</p>
         </div>
       </div>
@@ -183,22 +184,18 @@ export default function Expenses() {
         </div>
 
         <div className="w-44">
-          <label className="text-[10px] font-bold uppercase opacity-60 mb-1 block">From</label>
-          <input 
-            type="date" 
+          <DateInput 
             value={startDate}
-            onChange={e => setStartDate(e.target.value)}
-            className="w-full bg-surface-container-low border-none rounded-lg text-sm font-bold"
+            onChange={setStartDate}
+            label="From"
           />
         </div>
 
         <div className="w-44">
-          <label className="text-[10px] font-bold uppercase opacity-60 mb-1 block">To</label>
-          <input 
-            type="date" 
+          <DateInput 
             value={endDate}
-            onChange={e => setEndDate(e.target.value)}
-            className="w-full bg-surface-container-low border-none rounded-lg text-sm font-bold"
+            onChange={setEndDate}
+            label="To"
           />
         </div>
 
@@ -226,8 +223,11 @@ export default function Expenses() {
             </select>
           </div>
           <div className="space-y-1">
-            <label className="text-xs font-bold uppercase tracking-wider opacity-60">Date</label>
-            <input type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} className="w-full bg-surface-container-low border-none rounded-lg p-2" required />
+            <DateInput 
+              value={formData.date} 
+              onChange={val => setFormData({...formData, date: val})}
+              label="Date"
+            />
           </div>
           <div className="space-y-1">
             <label className="text-xs font-bold uppercase tracking-wider opacity-60">Description</label>

@@ -1,37 +1,45 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './hooks/useAuth';
-import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
-import DailyRegister from './pages/DailyRegister';
-import Expenses from './pages/Expenses';
-import Funds from './pages/Funds';
-import Admin from './pages/Admin';
-import Sellers from './pages/Sellers';
-import TruckQA from './pages/TruckQA';
-import FactoryIntake from './pages/FactoryIntake';
-import MilkCans from './pages/MilkCans';
-import Rejects from './pages/Rejects';
-import WeeklyReport from './pages/WeeklyReport';
-import MonthlyReport from './pages/MonthlyReport';
-import SupplierMonthlyPerformance from './pages/SupplierMonthlyPerformance';
-import TankerWeeklyReport from './pages/TankerWeeklyReport';
-import Reports from './pages/Reports';
-import RejectReport from './pages/RejectReport';
-import MilkCansIssuedReport from './pages/MilkCansIssuedReport';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
 import PresenceTracker from './components/PresenceTracker';
+import BrandingManager from './components/BrandingManager';
+
+// Lazy load pages
+const Login = lazy(() => import('./pages/Login'));
+const Home = lazy(() => import('./pages/Home'));
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const DailyRegister = lazy(() => import('./pages/DailyRegister'));
+const Expenses = lazy(() => import('./pages/Expenses'));
+const Funds = lazy(() => import('./pages/Funds'));
+const Admin = lazy(() => import('./pages/Admin'));
+const Sellers = lazy(() => import('./pages/Sellers'));
+const TruckQA = lazy(() => import('./pages/TruckQA'));
+const FactoryIntake = lazy(() => import('./pages/FactoryIntake'));
+const MilkCans = lazy(() => import('./pages/MilkCans'));
+const Rejects = lazy(() => import('./pages/Rejects'));
+const WeeklyReport = lazy(() => import('./pages/WeeklyReport'));
+const MonthlyReport = lazy(() => import('./pages/MonthlyReport'));
+const SupplierMonthlyPerformance = lazy(() => import('./pages/SupplierMonthlyPerformance'));
+const TankerWeeklyReport = lazy(() => import('./pages/TankerWeeklyReport'));
+const Reports = lazy(() => import('./pages/Reports'));
+const RejectReport = lazy(() => import('./pages/RejectReport'));
+const MilkCansIssuedReport = lazy(() => import('./pages/MilkCansIssuedReport'));
+
+function LoadingScreen() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-surface">
+      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+    </div>
+  );
+}
 
 function PrivateRoute({ children, roles, pageName }: { children: React.ReactNode; roles?: string[]; pageName?: string }) {
   const { user, profile, loading, isAuthReady, effectiveRole, permissions } = useAuth();
 
   if (!isAuthReady || loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-surface">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-      </div>
-    );
+    return <LoadingScreen />;
   }
 
   if (!user) {
@@ -77,30 +85,34 @@ function PrivateRoute({ children, roles, pageName }: { children: React.ReactNode
 export default function App() {
   return (
     <AuthProvider>
+      <BrandingManager />
       <PresenceTracker />
       <ErrorBoundary>
         <Router>
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route path="/" element={<PrivateRoute pageName="Dashboard"><Dashboard /></PrivateRoute>} />
-            <Route path="/daily-register" element={<PrivateRoute pageName="Daily Register" roles={['Super User', 'Admin', 'Cashier', 'Quality Controller', 'Supervisor', 'Viewer']}><DailyRegister /></PrivateRoute>} />
-            <Route path="/expenses" element={<PrivateRoute pageName="Expenses" roles={['Super User', 'Admin', 'Cashier', 'Supervisor', 'Viewer']}><Expenses /></PrivateRoute>} />
-            <Route path="/funds" element={<PrivateRoute pageName="Funds" roles={['Super User', 'Admin', 'Cashier', 'Quality Controller', 'Supervisor', 'Viewer']}><Funds /></PrivateRoute>} />
-            <Route path="/truck-qa" element={<PrivateRoute pageName="Truck & QA" roles={['Super User', 'Admin', 'Quality Controller', 'Supervisor', 'Cashier', 'Factory Clerk', 'Manager', 'Director', 'Viewer']}><TruckQA /></PrivateRoute>} />
-            <Route path="/factory-intake" element={<PrivateRoute pageName="Factory Intake" roles={['Super User', 'Admin', 'Factory Clerk', 'Viewer']}><FactoryIntake /></PrivateRoute>} />
-            <Route path="/milk-cans" element={<PrivateRoute pageName="Milk Cans" roles={['Super User', 'Admin', 'Cashier', 'Quality Controller', 'Supervisor', 'Manager', 'Director', 'Viewer']}><MilkCans /></PrivateRoute>} />
-            <Route path="/rejects" element={<PrivateRoute pageName="Rejects"><Rejects /></PrivateRoute>} />
-            <Route path="/reports" element={<PrivateRoute pageName="Reports" roles={['Super User', 'Admin', 'Cashier', 'Quality Controller', 'Supervisor', 'Manager', 'Director', 'Viewer', 'Factory Clerk']}><Reports /></PrivateRoute>} />
-            <Route path="/reports/rejects" element={<PrivateRoute pageName="Reports" roles={['Super User', 'Admin', 'Cashier', 'Quality Controller', 'Supervisor', 'Manager', 'Director', 'Viewer', 'Factory Clerk']}><RejectReport /></PrivateRoute>} />
-            <Route path="/reports/milk-cans-issued" element={<PrivateRoute pageName="Reports" roles={['Super User', 'Admin', 'Cashier', 'Quality Controller', 'Supervisor', 'Manager', 'Director', 'Viewer']}><MilkCansIssuedReport /></PrivateRoute>} />
-            <Route path="/reports/weekly" element={<PrivateRoute pageName="Reports" roles={['Super User', 'Admin', 'Cashier', 'Supervisor', 'Manager', 'Director', 'Viewer']}><WeeklyReport /></PrivateRoute>} />
-            <Route path="/reports/monthly" element={<PrivateRoute pageName="Reports" roles={['Super User', 'Admin', 'Cashier', 'Supervisor', 'Manager', 'Director', 'Viewer']}><MonthlyReport /></PrivateRoute>} />
-            <Route path="/reports/supplier-performance" element={<PrivateRoute pageName="Reports" roles={['Super User', 'Admin', 'Supervisor', 'Manager', 'Director']}><SupplierMonthlyPerformance /></PrivateRoute>} />
-            <Route path="/reports/tanker-weekly" element={<PrivateRoute pageName="Reports" roles={['Super User', 'Admin', 'Cashier', 'Supervisor', 'Manager', 'Director']}><TankerWeeklyReport /></PrivateRoute>} />
-            <Route path="/admin" element={<PrivateRoute pageName="Admin" roles={['Super User', 'Admin']}><Admin /></PrivateRoute>} />
-            <Route path="/sellers" element={<PrivateRoute pageName="Sellers" roles={['Super User', 'Admin', 'Manager', 'Director']}><Sellers /></PrivateRoute>} />
-            <Route path="*" element={<Navigate to="/" />} />
-          </Routes>
+          <Suspense fallback={<LoadingScreen />}>
+            <Routes>
+              <Route path="/login" element={<Login />} />
+              <Route path="/" element={<PrivateRoute pageName="Home"><Home /></PrivateRoute>} />
+              <Route path="/dashboard" element={<PrivateRoute pageName="Dashboard"><Dashboard /></PrivateRoute>} />
+              <Route path="/daily-register" element={<PrivateRoute pageName="Daily Register" roles={['Super User', 'Admin', 'Cashier', 'Quality Controller', 'Supervisor', 'Viewer']}><DailyRegister /></PrivateRoute>} />
+              <Route path="/expenses" element={<PrivateRoute pageName="Expenses" roles={['Super User', 'Admin', 'Cashier', 'Supervisor', 'Viewer']}><Expenses /></PrivateRoute>} />
+              <Route path="/funds" element={<PrivateRoute pageName="Funds" roles={['Super User', 'Admin', 'Cashier', 'Quality Controller', 'Supervisor', 'Viewer']}><Funds /></PrivateRoute>} />
+              <Route path="/truck-qa" element={<PrivateRoute pageName="Truck & QA" roles={['Super User', 'Admin', 'Quality Controller', 'Supervisor', 'Cashier', 'Factory Clerk', 'Manager', 'Director', 'Viewer']}><TruckQA /></PrivateRoute>} />
+              <Route path="/factory-intake" element={<PrivateRoute pageName="Factory Intake" roles={['Super User', 'Admin', 'Factory Clerk', 'Viewer']}><FactoryIntake /></PrivateRoute>} />
+              <Route path="/milk-cans" element={<PrivateRoute pageName="Milk Cans" roles={['Super User', 'Admin', 'Cashier', 'Quality Controller', 'Supervisor', 'Manager', 'Director', 'Viewer']}><MilkCans /></PrivateRoute>} />
+              <Route path="/rejects" element={<PrivateRoute pageName="Rejects"><Rejects /></PrivateRoute>} />
+              <Route path="/reports" element={<PrivateRoute pageName="Reports" roles={['Super User', 'Admin', 'Cashier', 'Quality Controller', 'Supervisor', 'Manager', 'Director', 'Viewer', 'Factory Clerk']}><Reports /></PrivateRoute>} />
+              <Route path="/reports/rejects" element={<PrivateRoute pageName="Reports" roles={['Super User', 'Admin', 'Cashier', 'Quality Controller', 'Supervisor', 'Manager', 'Director', 'Viewer', 'Factory Clerk']}><RejectReport /></PrivateRoute>} />
+              <Route path="/reports/milk-cans-issued" element={<PrivateRoute pageName="Reports" roles={['Super User', 'Admin', 'Cashier', 'Quality Controller', 'Supervisor', 'Manager', 'Director', 'Viewer']}><MilkCansIssuedReport /></PrivateRoute>} />
+              <Route path="/reports/weekly" element={<PrivateRoute pageName="Reports" roles={['Super User', 'Admin', 'Cashier', 'Supervisor', 'Manager', 'Director', 'Viewer']}><WeeklyReport /></PrivateRoute>} />
+              <Route path="/reports/monthly" element={<PrivateRoute pageName="Reports" roles={['Super User', 'Admin', 'Cashier', 'Supervisor', 'Manager', 'Director', 'Viewer']}><MonthlyReport /></PrivateRoute>} />
+              <Route path="/reports/supplier-performance" element={<PrivateRoute pageName="Reports" roles={['Super User', 'Admin', 'Supervisor', 'Manager', 'Director']}><SupplierMonthlyPerformance /></PrivateRoute>} />
+              <Route path="/reports/tanker-weekly" element={<PrivateRoute pageName="Reports" roles={['Super User', 'Admin', 'Cashier', 'Supervisor', 'Manager', 'Director']}><TankerWeeklyReport /></PrivateRoute>} />
+              <Route path="/admin" element={<PrivateRoute pageName="Admin" roles={['Super User', 'Admin']}><Admin /></PrivateRoute>} />
+              <Route path="/sellers" element={<PrivateRoute pageName="Sellers" roles={['Super User', 'Admin', 'Manager', 'Director']}><Sellers /></PrivateRoute>} />
+              <Route path="*" element={<Navigate to="/" />} />
+            </Routes>
+          </Suspense>
         </Router>
       </ErrorBoundary>
     </AuthProvider>

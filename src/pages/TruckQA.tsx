@@ -4,9 +4,10 @@ import { db } from '../firebase';
 import { useAuth } from '../hooks/useAuth';
 import { handleFirestoreError, OperationType } from '../lib/errorHandlers';
 import { Plus, Trash2, Edit2, X, Truck, Beaker, CheckCircle2, AlertCircle, QrCode, FileText, Download, Eye, Save, Search, FileSpreadsheet, Printer, Share2 } from 'lucide-react';
-import { cn, formatNumber } from '../lib/utils';
+import { cn, formatNumber, formatNumberInput } from '../lib/utils';
 import { format, isWithinInterval, startOfDay, endOfDay, startOfMonth } from 'date-fns';
 import { getTanzaniaTodayStr, parseTanzaniaDate, safeFormat, getTanzaniaDate } from '../lib/dateUtils';
+import { DateInput } from '../components/DateInput';
 import { RESAZURIN_SCALE, getResazurinGrade } from '../lib/qualityConstants';
 import { ResazurinBadge } from '../components/ResazurinBadge';
 import { TypeAhead } from '../components/TypeAhead';
@@ -211,23 +212,25 @@ export default function TruckQA() {
     const litres = Number(formData.litresLoaded);
     const density = Number(formData.density);
     if (litres && density) {
-      const weight = (litres * density).toFixed(2);
-      setFormData(prev => ({ ...prev, weightKg: weight }));
+      const weight = formatNumberInput(litres * density, 2);
+      if (weight !== formData.weightKg) {
+        setFormData(prev => ({ ...prev, weightKg: weight }));
+      }
     }
-  }, [formData.litresLoaded, formData.density]);
+  }, [formData.litresLoaded, formData.density, formData.weightKg]);
 
   useEffect(() => {
     if (editData) {
       const litres = Number(editData.litresLoaded);
       const density = Number(editData.density);
       if (litres && density) {
-        const weight = (litres * density).toFixed(2);
+        const weight = formatNumberInput(litres * density, 2);
         if (weight !== editData.weightKg) {
           setEditData(prev => prev ? ({ ...prev, weightKg: weight }) : null);
         }
       }
     }
-  }, [editData?.litresLoaded, editData?.density]);
+  }, [editData?.litresLoaded, editData?.density, editData?.weightKg]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -254,8 +257,8 @@ export default function TruckQA() {
         tempAtLoading: Number(formData.tempAtLoading),
         ph: Number(formData.ph),
         density: Number(formData.density),
-        qtyReceived: Number(formData.qtyReceived || formData.weightKg),
-        qtyRejected: Number(formData.qtyRejected),
+        qtyReceived: formData.qtyReceived ? Number(formData.qtyReceived) : null,
+        qtyRejected: formData.qtyRejected ? Number(formData.qtyRejected) : 0,
         qualityController: profile?.fullName,
         createdAt: new Date().toISOString()
       };
@@ -277,7 +280,7 @@ export default function TruckQA() {
 
       const litres = Number(row.LitresLoaded);
       const density = Number(row.Density || 1.030);
-      const weight = Number(row.WeightKg || (litres * density).toFixed(2));
+      const weight = Number(row.WeightKg || formatNumber(litres * density, 2));
 
       await addDoc(collection(db, 'truck_qa'), {
         mccId: mcc.id,
@@ -295,7 +298,7 @@ export default function TruckQA() {
         resazurin: String(row.Resazurin || '6'),
         antibiotic: row.Antibiotic || 'Negative',
         organoleptic: row.Organoleptic || 'Normal',
-        qtyReceived: Number(row.QtyReceived || weight),
+        qtyReceived: row.QtyReceived ? Number(row.QtyReceived) : null,
         qtyRejected: Number(row.QtyRejected || 0),
         qualityController: row.QualityController || row.Grader || profile?.fullName || '',
         remarks: row.Remarks || 'Imported',
@@ -318,16 +321,16 @@ export default function TruckQA() {
     doc.text(`MCC: ${mccName}`, 14, 32);
     doc.text(`Truck Reg: ${rec.truckReg}`, 14, 39);
     doc.text(`Driver: ${rec.driverName}`, 14, 46);
-    doc.text(`Milk Loaded: ${rec.litresLoaded?.toLocaleString()} L`, 14, 53);
-    doc.text(`Weight: ${rec.weightKg?.toLocaleString()} KG`, 14, 60);
+    doc.text(`Milk Loaded: ${formatNumber(rec.litresLoaded, 2)} L`, 14, 53);
+    doc.text(`Weight: ${formatNumber(rec.weightKg, 2)} KG`, 14, 60);
     doc.text(`Seal No: ${rec.sealNo || 'N/A'}`, 14, 67);
 
     const qaData = [
       ['Parameter', 'Result', 'Status'],
-      ['Temperature', `${rec.tempAtLoading}°C`, rec.tempAtLoading <= 6 ? 'Pass' : 'Fail'],
-      ['pH', rec.ph, (rec.ph >= 6.6 && rec.ph <= 6.8) ? 'Pass' : 'Fail'],
+      ['Temperature', `${formatNumber(rec.tempAtLoading, 2)}°C`, rec.tempAtLoading <= 6 ? 'Pass' : 'Fail'],
+      ['pH', formatNumber(rec.ph, 2), (rec.ph >= 6.6 && rec.ph <= 6.8) ? 'Pass' : 'Fail'],
       ['Alcohol Test', rec.alcoholTest, rec.alcoholTest === 'Pass' ? 'Pass' : 'Fail'],
-      ['Density', rec.density, (rec.density >= 1.028 && rec.density <= 1.032) ? 'Pass' : 'Fail'],
+      ['Density', formatNumber(rec.density, 3), (rec.density >= 1.028 && rec.density <= 1.032) ? 'Pass' : 'Fail'],
       ['Resazurin', `${getResazurinGrade(rec.resazurin).label} - ${getResazurinGrade(rec.resazurin).description}`, Number(rec.resazurin) >= 4 ? 'Pass' : 'Fail'],
       ['Antibiotic', rec.antibiotic, rec.antibiotic === 'Negative' ? 'Pass' : 'Fail'],
       ['Organoleptic', rec.organoleptic, rec.organoleptic === 'Normal' ? 'Pass' : 'Fail'],
@@ -346,7 +349,7 @@ export default function TruckQA() {
     doc.text(`Quality Controller: ${rec.qualityController || rec.grader || 'N/A'}`, 14, (doc as any).lastAutoTable.finalY + 15);
     doc.text(`Remarks: ${rec.remarks || 'None'}`, 14, (doc as any).lastAutoTable.finalY + 22);
 
-    doc.save(`QA_Report_${rec.truckReg}_${rec.date}.pdf`);
+    doc.save(`QA_Report_${rec.truckReg}_${safeFormat(rec.date, 'dd-MM-yyyy')}.pdf`);
   };
 
   const exportAllToPDF = () => {
@@ -354,32 +357,33 @@ export default function TruckQA() {
     doc.setFontSize(18);
     doc.text('Truck Dispatch & QA Report', 14, 22);
     doc.setFontSize(11);
-    doc.text(`Period: ${dateRange.start} to ${dateRange.end}`, 14, 30);
+    doc.text(`Period: ${safeFormat(dateRange.start, 'dd/MM/yyyy')} to ${safeFormat(dateRange.end, 'dd/MM/yyyy')}`, 14, 30);
 
     const tableData = filteredRecords.map(rec => [
       safeFormat(rec.date, 'dd/MM/yyyy'),
       rec.truckReg,
       rec.driverName,
-      `${rec.litresLoaded} L`,
-      `${rec.tempAtLoading}°C`,
-      rec.ph,
+      `${formatNumber(rec.litresLoaded, 2)} L`,
+      `${rec.qtyReceived ? formatNumber(rec.qtyReceived, 2) : '---'} L`,
+      `${rec.qtyReceived ? (rec.qtyReceived - rec.litresLoaded > 0 ? '+' : '') + formatNumber(rec.qtyReceived - rec.litresLoaded, 2) : '---'} L`,
+      `${formatNumber(rec.tempAtLoading, 2)}°C`,
       rec.factoryStatus || 'In Transit'
     ]);
 
     (doc as any).autoTable({
       startY: 40,
-      head: [['Date', 'Truck', 'Driver', 'Loaded', 'Temp', 'pH', 'Status']],
+      head: [['Date', 'Truck', 'Driver', 'Loaded', 'Received', 'Diff', 'Temp', 'Status']],
       body: tableData,
       theme: 'grid',
       headStyles: { fillColor: [0, 102, 204] }
     });
 
-    doc.save(`Truck_QA_Export_${dateRange.start}_${dateRange.end}.pdf`);
+    doc.save(`Truck_QA_Export_${safeFormat(dateRange.start, 'dd-MM-yyyy')}_${safeFormat(dateRange.end, 'dd-MM-yyyy')}.pdf`);
   };
 
   const exportAllToExcel = () => {
     const data = filteredRecords.map(rec => ({
-      Date: rec.date,
+      Date: safeFormat(rec.date, 'dd/MM/yyyy'),
       'Truck Reg': rec.truckReg,
       Driver: rec.driverName,
       'Litres Loaded': rec.litresLoaded,
@@ -391,6 +395,7 @@ export default function TruckQA() {
       Resazurin: rec.resazurin,
       Antibiotic: rec.antibiotic,
       'Qty Received': rec.qtyReceived || 0,
+      'Difference (L)': rec.qtyReceived ? (rec.qtyReceived - rec.litresLoaded) : 0,
       'Qty Rejected': rec.qtyRejected || 0,
       Status: rec.factoryStatus || 'In Transit',
       'Quality Controller': rec.qualityController || rec.grader || '',
@@ -400,7 +405,7 @@ export default function TruckQA() {
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Truck QA");
-    XLSX.writeFile(wb, `Truck_QA_Export_${dateRange.start}_${dateRange.end}.xlsx`);
+    XLSX.writeFile(wb, `Truck_QA_Export_${safeFormat(dateRange.start, 'dd-MM-yyyy')}_${safeFormat(dateRange.end, 'dd-MM-yyyy')}.xlsx`);
   };
 
   const handleShare = async () => {
@@ -412,7 +417,7 @@ export default function TruckQA() {
           safeFormat(rec.date, 'dd/MM/yyyy'),
           rec.truckReg,
           rec.driverName,
-          rec.litresLoaded,
+          formatNumber(rec.litresLoaded, 2),
           rec.factoryStatus || 'In Transit'
         ]);
         (doc as any).autoTable({
@@ -421,11 +426,11 @@ export default function TruckQA() {
           body: tableData,
         });
         const pdfBlob = doc.output('blob');
-        const file = new File([pdfBlob], `Truck_QA_${format(new Date(), 'yyyy-MM-dd')}.pdf`, { type: 'application/pdf' });
+        const file = new File([pdfBlob], `Truck_QA_${format(new Date(), 'dd-MM-yyyy')}.pdf`, { type: 'application/pdf' });
 
         await navigator.share({
           title: 'Truck Dispatch & QA Report',
-          text: `Summary of tanker dispatches for ${dateRange.start} - ${dateRange.end}`,
+          text: `Summary of tanker dispatches for ${safeFormat(dateRange.start, 'dd/MM/yyyy')} - ${safeFormat(dateRange.end, 'dd/MM/yyyy')}`,
           files: [file]
         });
       } catch (err) {
@@ -435,6 +440,26 @@ export default function TruckQA() {
       alert('Sharing is not supported on this browser. Please use the Download buttons.');
     }
   };
+
+  const stats = useMemo(() => {
+    return filteredRecords.reduce((acc, rec) => {
+      const loaded = Number(rec.litresLoaded || 0);
+      const received = Number(rec.qtyReceived || 0);
+      const rejected = Number(rec.qtyRejected || 0);
+      
+      acc.totalLoaded += loaded;
+      acc.totalReceived += received;
+      acc.totalRejected += rejected;
+      acc.totalDiff += (rec.qtyReceived ? (received - loaded) : 0);
+      
+      return acc;
+    }, {
+      totalLoaded: 0,
+      totalReceived: 0,
+      totalRejected: 0,
+      totalDiff: 0
+    });
+  }, [filteredRecords]);
 
   if (loading) return <div className="flex justify-center p-10"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div></div>;
 
@@ -496,22 +521,18 @@ export default function TruckQA() {
         </div>
 
         <div className="w-44">
-          <label className="text-[10px] font-bold uppercase opacity-60 mb-1 block">From</label>
-          <input 
-            type="date" 
+          <DateInput 
             value={dateRange.start} 
-            onChange={e => setDateRange(prev => ({ ...prev, start: e.target.value }))}
-            className="w-full px-3 py-2 bg-surface-container-low border-none rounded-lg text-sm font-bold h-10 transition-colors focus:bg-surface-container-high"
+            onChange={val => setDateRange(prev => ({ ...prev, start: val }))}
+            label="From"
           />
         </div>
 
         <div className="w-44">
-          <label className="text-[10px] font-bold uppercase opacity-60 mb-1 block">To</label>
-          <input 
-            type="date" 
+          <DateInput 
             value={dateRange.end} 
-            onChange={e => setDateRange(prev => ({ ...prev, end: e.target.value }))}
-            className="w-full px-3 py-2 bg-surface-container-low border-none rounded-lg text-sm font-bold h-10 transition-colors focus:bg-surface-container-high"
+            onChange={val => setDateRange(prev => ({ ...prev, end: val }))}
+            label="To"
           />
         </div>
 
@@ -546,6 +567,61 @@ export default function TruckQA() {
         </div>
       </div>
 
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-white p-6 rounded-xl border border-outline-variant/20 shadow-sm relative overflow-hidden group hover:shadow-md transition-all">
+          <div className="absolute top-0 right-0 w-24 h-24 bg-primary/5 rounded-full -mr-8 -mt-8 transition-transform group-hover:scale-110"></div>
+          <div className="relative z-10 flex flex-col h-full">
+            <div className="flex items-center gap-2 text-primary mb-2">
+              <Truck size={18} />
+              <span className="text-[10px] font-bold uppercase tracking-widest">Total Dispatched</span>
+            </div>
+            <div className="mt-auto">
+              <h2 className="text-3xl font-black text-on-surface">{formatNumber(stats.totalLoaded, 2)} L</h2>
+              <p className="text-[10px] text-on-surface-variant mt-1 font-medium italic">Estimated volume sent from MCCs</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-xl border border-outline-variant/20 shadow-sm relative overflow-hidden group hover:shadow-md transition-all">
+          <div className="absolute top-0 right-0 w-24 h-24 bg-green-50 rounded-full -mr-8 -mt-8 transition-transform group-hover:scale-110"></div>
+          <div className="relative z-10 flex flex-col h-full">
+            <div className="flex items-center gap-2 text-green-600 mb-2">
+                <CheckCircle2 size={18} />
+                <span className="text-[10px] font-bold uppercase tracking-widest">Actual Received</span>
+            </div>
+            <div className="mt-auto">
+                <h2 className="text-3xl font-black text-on-surface">{formatNumber(stats.totalReceived, 2)} L</h2>
+                <p className="text-[10px] text-on-surface-variant mt-1 font-medium italic">Volume verified at collection point</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-xl border border-outline-variant/20 shadow-sm relative overflow-hidden group hover:shadow-md transition-all">
+          <div className={cn(
+            "absolute top-0 right-0 w-24 h-24 rounded-full -mr-8 -mt-8 transition-transform group-hover:scale-110",
+            stats.totalDiff >= 0 ? "bg-green-50" : "bg-red-50"
+          )}></div>
+          <div className="relative z-10 flex flex-col h-full">
+            <div className={cn(
+              "flex items-center gap-2 mb-2",
+              stats.totalDiff >= 0 ? "text-green-600" : "text-error"
+            )}>
+                <AlertCircle size={18} />
+                <span className="text-[10px] font-bold uppercase tracking-widest">Total Difference</span>
+            </div>
+            <div className="mt-auto">
+                <h2 className={cn(
+                  "text-3xl font-black",
+                  stats.totalDiff >= 0 ? "text-green-600" : "text-error"
+                )}>
+                  {stats.totalDiff > 0 ? '+' : ''}{formatNumber(stats.totalDiff, 2)} L
+                </h2>
+                <p className="text-[10px] text-on-surface-variant mt-1 font-medium italic">Variance between sent and received</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {isAdding && (
         <form onSubmit={handleSubmit} className="bg-white p-6 rounded-xl border border-outline-variant/20 shadow-sm space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -556,8 +632,11 @@ export default function TruckQA() {
               </select>
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-bold uppercase tracking-wider">Date</label>
-              <input type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} className="w-full bg-surface-container-low border-none rounded-lg text-sm" required />
+              <DateInput 
+                value={formData.date} 
+                onChange={val => setFormData({...formData, date: val})}
+                label="Date"
+              />
             </div>
             <div className="space-y-1">
               <label className="text-xs font-bold uppercase tracking-wider">Truck Reg No.</label>
@@ -596,7 +675,15 @@ export default function TruckQA() {
             </div>
             <div className="space-y-1">
               <label className="text-xs font-bold uppercase tracking-wider">Weight (KG)</label>
-              <input type="number" placeholder="0" value={formData.weightKg} onChange={e => setFormData({...formData, weightKg: e.target.value})} className="w-full bg-surface-container-low border-none rounded-lg text-sm" required />
+              <input 
+                type="number" 
+                placeholder="0" 
+                value={formData.weightKg} 
+                onChange={e => setFormData({...formData, weightKg: e.target.value})} 
+                className="w-full bg-surface-container-low border-none rounded-lg text-sm" 
+                readOnly
+                title="Auto-calculated from Liters * Density"
+              />
             </div>
             <div className="space-y-1">
               <label className="text-xs font-bold uppercase tracking-wider">Seal No.</label>
@@ -672,6 +759,8 @@ export default function TruckQA() {
               <th className="px-6 py-4 border-b border-outline-variant/10">Truck</th>
               <th className="px-6 py-4 border-b border-outline-variant/10">MCC</th>
               <th className="px-6 py-4 border-b border-outline-variant/10">Loaded (L)</th>
+              <th className="px-6 py-4 border-b border-outline-variant/10">Received (L)</th>
+              <th className="px-6 py-4 border-b border-outline-variant/10">Diff (L)</th>
               <th className="px-6 py-4 border-b border-outline-variant/10">Temp</th>
               <th className="px-6 py-4 border-b border-outline-variant/10">pH</th>
               <th className="px-6 py-4 border-b border-outline-variant/10">Status</th>
@@ -712,10 +801,21 @@ export default function TruckQA() {
                     <td className="px-6 py-4 text-sm">
                       <span className="font-bold text-primary">{mccs.find(m => m.id === rec.mccId)?.name || 'Unknown'}</span>
                     </td>
-                    <td className="px-6 py-4 text-sm font-medium">{formatNumber(rec.litresLoaded, 1)} L</td>
+                    <td className="px-6 py-4 text-sm font-medium">{formatNumber(rec.litresLoaded, 2)} L</td>
+                    <td className="px-6 py-4 text-sm font-bold text-green-600">
+                      {rec.qtyReceived ? `${formatNumber(rec.qtyReceived, 2)} L` : '---'}
+                    </td>
+                    <td className={cn(
+                      "px-6 py-4 text-sm font-bold",
+                      !rec.qtyReceived ? "text-on-surface/30" :
+                      (Number(rec.qtyReceived) - Number(rec.litresLoaded)) > 0 ? "text-green-600" : 
+                      (Number(rec.qtyReceived) - Number(rec.litresLoaded)) < 0 ? "text-error" : "text-on-surface/30"
+                    )}>
+                      {rec.qtyReceived ? `${(Number(rec.qtyReceived) - Number(rec.litresLoaded)) > 0 ? '+' : ''}${formatNumber(Number(rec.qtyReceived) - Number(rec.litresLoaded), 2)} L` : ''}
+                    </td>
                     <td className="px-6 py-4 text-sm">
                       <span className={cn("px-2 py-0.5 rounded text-[10px] font-bold", isTempFail ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700")}>
-                        {formatNumber(rec.tempAtLoading, 1)}°C
+                        {formatNumber(rec.tempAtLoading, 2)}°C
                       </span>
                     </td>
                     <td className="px-6 py-4 text-sm">
@@ -808,21 +908,17 @@ export default function TruckQA() {
                                   />
                                 </div>
                                 <div className="space-y-1">
-                                  <label className="text-[10px] font-bold uppercase opacity-60">Date</label>
-                                  <input 
-                                    type="date"
+                                  <DateInput 
                                     value={editData.date} 
-                                    onChange={e => setEditData({...editData, date: e.target.value})}
-                                    className="w-full bg-white border border-outline-variant/30 rounded p-2 text-sm"
+                                    onChange={val => setEditData({...editData, date: val})}
+                                    label="Date"
                                   />
                                 </div>
                                 <div className="space-y-1">
-                                  <label className="text-[10px] font-bold uppercase opacity-60">Received Date</label>
-                                  <input 
-                                    type="date"
+                                  <DateInput 
                                     value={editData.receivedAt ? editData.receivedAt.split('T')[0] : ''} 
-                                    onChange={e => setEditData({...editData, receivedAt: e.target.value ? new Date(e.target.value).toISOString() : null})}
-                                    className="w-full bg-white border border-outline-variant/30 rounded p-2 text-sm"
+                                    onChange={val => setEditData({...editData, receivedAt: val ? val : null})}
+                                    label="Received Date"
                                   />
                                 </div>
                               </div>
@@ -844,30 +940,45 @@ export default function TruckQA() {
                                     required
                                   />
                                 </div>
-                                <div className="space-y-1">
-                                  <label className="text-[10px] font-bold uppercase opacity-60">Weight (KG)</label>
-                                  <input 
-                                    type="number"
-                                    value={editData.weightKg} 
-                                    onChange={e => setEditData({...editData, weightKg: e.target.value})}
-                                    className="w-full bg-white border border-outline-variant/30 rounded p-2 text-sm"
-                                  />
-                                </div>
-                                <div className="space-y-1">
-                                  <label className="text-[10px] font-bold uppercase opacity-60">Qty Received</label>
-                                  <input 
-                                    type="number"
-                                    value={editData.qtyReceived} 
-                                    onChange={e => setEditData({...editData, qtyReceived: e.target.value})}
-                                    className="w-full bg-white border border-outline-variant/30 rounded p-2 text-sm"
-                                  />
-                                </div>
-                                <div className="space-y-1">
-                                  <label className="text-[10px] font-bold uppercase opacity-60 text-primary">Difference (L)</label>
-                                  <div className="w-full bg-surface-container-low border border-outline-variant/30 rounded p-2 text-sm font-bold text-primary">
-                                    {formatNumber(Number(editData.litresLoaded || 0) - Number(editData.qtyReceived || 0), 1)} L
-                                  </div>
-                                </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold uppercase opacity-60">Weight (KG)</label>
+                <input 
+                  type="number"
+                  value={editData.weightKg} 
+                  onChange={e => setEditData({...editData, weightKg: e.target.value})}
+                  className="w-full bg-white border border-outline-variant/30 rounded p-2 text-sm"
+                  readOnly
+                  title="Auto-calculated from Liters * Density"
+                />
+              </div>
+              {editData.receivedAt && (
+                <>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase opacity-60">Qty Received</label>
+                    <input 
+                      type="number"
+                      value={editData.qtyReceived} 
+                      onChange={e => setEditData({...editData, qtyReceived: e.target.value})}
+                      className="w-full bg-white border border-outline-variant/30 rounded p-2 text-sm"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className={cn(
+                      "text-[10px] font-bold uppercase opacity-60",
+                      (Number(editData.qtyReceived || 0) - Number(editData.litresLoaded || 0)) > 0 ? "text-green-600" : 
+                      (Number(editData.qtyReceived || 0) - Number(editData.litresLoaded || 0)) < 0 ? "text-error" : "text-on-surface-variant"
+                    )}>Difference (L)</label>
+                    <div className={cn(
+                      "w-full bg-surface-container-low border border-outline-variant/30 rounded p-2 text-sm font-bold",
+                      (Number(editData.qtyReceived || 0) - Number(editData.litresLoaded || 0)) > 0 ? "text-green-600" : 
+                      (Number(editData.qtyReceived || 0) - Number(editData.litresLoaded || 0)) < 0 ? "text-error" : "text-on-surface-variant"
+                    )}>
+                      {(Number(editData.qtyReceived || 0) - Number(editData.litresLoaded || 0)) > 0 ? '+' : ''}
+                      {formatNumber(Number(editData.qtyReceived || 0) - Number(editData.litresLoaded || 0), 2)} L
+                    </div>
+                  </div>
+                </>
+              )}
                                 <div className="space-y-1">
                                   <label className="text-[10px] font-bold uppercase opacity-60 text-error">Qty Rejected</label>
                                   <input 
@@ -980,7 +1091,7 @@ export default function TruckQA() {
                           <div className="flex gap-4 text-[10px] text-on-surface-variant opacity-60 font-medium">
                             <span>Quality Controller: {editData.qualityController || editData.grader}</span>
                             <span>•</span>
-                            <span>Created: {safeFormat(editData.createdAt, 'PPP p')}</span>
+                            <span>Created: {safeFormat(editData.createdAt, 'dd/MM/yyyy HH:mm')}</span>
                             {editData.receivedBy && (
                               <>
                                 <span>•</span>

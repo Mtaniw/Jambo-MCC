@@ -49,10 +49,14 @@ export default function SupplierMonthlyPerformance() {
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'mccs'));
 
     const unsubscribeSellers = onSnapshot(collection(db, 'sellers'), (snapshot) => {
-      const sellersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const sellersData = snapshot.docs.map(doc => {
+        const data = doc.data();
+        const smccIds = data.mccIds || (data.mccId ? [data.mccId] : []);
+        return { id: doc.id, ...data, mccIds: smccIds };
+      });
       // Filter sellers by MCC access and active status
       const filteredSellers = sellersData.filter((s: any) => {
-        const matchesMcc = profile.role === 'Super User' || profile.role === 'Admin' || (profile.mccIds && profile.mccIds.includes(s.mccId));
+        const matchesMcc = profile.role === 'Super User' || profile.role === 'Admin' || (profile.mccIds && s.mccIds && s.mccIds.some((id: string) => profile.mccIds.includes(id)));
         return matchesMcc && s.active !== false;
       });
       setSellers(filteredSellers);
@@ -249,10 +253,10 @@ export default function SupplierMonthlyPerformance() {
     const tableData = reportData.rows.map(r => [
       r.no, 
       r.name, 
-      ...r.weeks.map((w: number) => w.toFixed(1)),
-      r.total.toFixed(1), 
-      r.rejected.toFixed(1), 
-      `TSh ${r.netPaid.toLocaleString()}`
+      ...r.weeks.map((w: number) => formatNumber(w, 2)),
+      formatNumber(r.total, 2),
+      formatNumber(r.rejected, 2),
+      formatNumber(r.netPaid, 0)
     ]);
 
     const weekHeaders = reportData.weeks.map((_, i) => `Wk ${i + 1}`);
@@ -277,9 +281,9 @@ export default function SupplierMonthlyPerformance() {
         const tableData = reportData.rows.map(r => [
           r.no,
           r.name,
-          r.total.toFixed(1),
-          r.rejected.toFixed(1),
-          `TSh ${r.netPaid.toLocaleString()}`
+          formatNumber(r.total, 2),
+          formatNumber(r.rejected, 2),
+          `TSh ${formatNumber(r.netPaid, 0)}`
         ]);
         (doc as any).autoTable({
           startY: 30,
@@ -382,10 +386,10 @@ export default function SupplierMonthlyPerformance() {
                   <td className="px-6 py-4 text-on-surface-variant">{row.no}</td>
                   <td className="px-6 py-4 font-bold text-on-surface group-hover:text-primary transition-colors">{row.name}</td>
                   {row.weeks.map((w: number, i: number) => (
-                    <td key={i} className="px-6 py-4 text-right">{formatNumber(w, 1)}</td>
+                    <td key={i} className="px-6 py-4 text-right">{formatNumber(w, 2)}</td>
                   ))}
-                  <td className="px-6 py-4 text-right font-bold">{formatNumber(row.total, 1)}</td>
-                  <td className="px-6 py-4 text-right text-error">{formatNumber(row.rejected, 1)}</td>
+                  <td className="px-6 py-4 text-right font-bold">{formatNumber(row.total, 2)}</td>
+                  <td className="px-6 py-4 text-right text-error">{formatNumber(row.rejected, 2)}</td>
                   <td className="px-6 py-4 text-right font-bold text-primary">{formatNumber(row.netPaid, 0)}</td>
                 </tr>
               ))}
@@ -394,10 +398,10 @@ export default function SupplierMonthlyPerformance() {
               <tr>
                 <td colSpan={2} className="px-6 py-5 text-right text-xs uppercase tracking-wider text-on-surface-variant">Grand Totals</td>
                 {reportData.totals.weekTotals.map((w: number, i: number) => (
-                  <td key={i} className="px-6 py-5 text-right">{formatNumber(w, 1)}</td>
+                  <td key={i} className="px-6 py-5 text-right">{formatNumber(w, 2)}</td>
                 ))}
-                <td className="px-6 py-5 text-right text-on-surface">{formatNumber(reportData.totals.total, 1)}</td>
-                <td className="px-6 py-5 text-right text-error">{formatNumber(reportData.totals.rejected, 1)}</td>
+                <td className="px-6 py-5 text-right text-on-surface">{formatNumber(reportData.totals.total, 2)}</td>
+                <td className="px-6 py-5 text-right text-error">{formatNumber(reportData.totals.rejected, 2)}</td>
                 <td className="px-6 py-5 text-right text-primary text-base">{formatNumber(reportData.totals.netPaid, 0)}</td>
               </tr>
             </tfoot>

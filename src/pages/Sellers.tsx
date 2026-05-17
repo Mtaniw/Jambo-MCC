@@ -22,7 +22,7 @@ export default function Sellers() {
     phone: '',
     location: '',
     category: 'Farmer',
-    mccId: '',
+    mccIds: [] as string[],
     active: true
   });
 
@@ -35,11 +35,16 @@ export default function Sellers() {
 
     let sellersQuery = query(collection(db, 'sellers'));
     if (profile.role !== 'Super User' && profile.role !== 'Admin' && profile.mccIds?.length > 0) {
-      sellersQuery = query(collection(db, 'sellers'), where('mccId', 'in', profile.mccIds));
+      sellersQuery = query(collection(db, 'sellers'), where('mccIds', 'array-contains-any', profile.mccIds));
     }
 
     const unsubSellers = onSnapshot(sellersQuery, (snap) => {
-      setSellers(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setSellers(snap.docs.map(doc => {
+        const data = doc.data();
+        // Migrating old data: if mccId exists and mccIds doesn't, convert to array
+        const mccIds = data.mccIds || (data.mccId ? [data.mccId] : []);
+        return { id: doc.id, ...data, mccIds };
+      }));
       setLoading(false);
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'sellers'));
 
@@ -52,7 +57,7 @@ export default function Sellers() {
                            s.phone.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesStatus = statusFilter === 'all' || 
                            (statusFilter === 'active' ? s.active !== false : s.active === false);
-      const matchesMcc = mccFilter === 'all' || s.mccId === mccFilter;
+      const matchesMcc = mccFilter === 'all' || (s.mccIds && s.mccIds.includes(mccFilter));
       return matchesSearch && matchesStatus && matchesMcc;
     });
   }, [sellers, searchTerm, statusFilter, mccFilter]);
@@ -66,7 +71,7 @@ export default function Sellers() {
         updatedAt: new Date().toISOString()
       });
       setIsAdding(false);
-      setFormData({ name: '', phone: '', location: '', category: 'Farmer', mccId: '', active: true });
+      setFormData({ name: '', phone: '', location: '', category: 'Farmer', mccIds: [], active: true });
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'sellers');
     }
@@ -160,7 +165,7 @@ export default function Sellers() {
                 <th className="px-6 py-3">#</th>
                 <th className="px-6 py-3">Seller Name</th>
                 <th className="px-6 py-3">Phone</th>
-                <th className="px-6 py-3">MCC</th>
+                <th className="px-6 py-3">MCC(s)</th>
                 <th className="px-6 py-3">Category</th>
                 <th className="px-6 py-3">Status</th>
                 <th className="px-6 py-3 text-right">Actions</th>
@@ -173,7 +178,17 @@ export default function Sellers() {
                   <td className="px-6 py-4 text-sm font-bold">{seller.name}</td>
                   <td className="px-6 py-4 text-sm">{seller.phone}</td>
                   <td className="px-6 py-4 text-sm">
-                    {mccs.find(m => m.id === seller.mccId)?.name || 'Unknown'}
+                    <div className="flex flex-wrap gap-1">
+                      {seller.mccIds && seller.mccIds.length > 0 ? (
+                        seller.mccIds.map((id: string) => (
+                          <span key={id} className="bg-surface-container-high px-2 py-0.5 rounded text-[10px] font-medium">
+                            {mccs.find(m => m.id === id)?.name || 'Unknown'}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-error italic text-xs">No MCC assigned</span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-6 py-4 text-sm">{seller.category}</td>
                   <td className="px-6 py-4">
@@ -230,16 +245,26 @@ export default function Sellers() {
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-bold uppercase opacity-60">MCC Assignment</label>
-                <select 
-                  value={formData.mccId} 
-                  onChange={e => setFormData({...formData, mccId: e.target.value})}
-                  className="w-full bg-surface-container-low border-none rounded-lg p-2 text-sm"
-                  required
-                >
-                  <option value="">Select MCC</option>
-                  {mccs.map(mcc => <option key={mcc.id} value={mcc.id}>{mcc.name}</option>)}
-                </select>
+                <label className="text-xs font-bold uppercase opacity-60">MCC Assignments</label>
+                <div className="bg-surface-container-low rounded-lg p-3 max-h-40 overflow-y-auto space-y-2 border border-outline-variant/10">
+                  {mccs.map(mcc => (
+                    <label key={mcc.id} className="flex items-center gap-2 cursor-pointer hover:bg-black/5 p-1 rounded transition-colors">
+                      <input 
+                        type="checkbox"
+                        checked={formData.mccIds.includes(mcc.id)}
+                        onChange={e => {
+                          const newIds = e.target.checked 
+                            ? [...formData.mccIds, mcc.id]
+                            : formData.mccIds.filter(id => id !== mcc.id);
+                          setFormData({...formData, mccIds: newIds});
+                        }}
+                        className="rounded border-outline-variant text-primary focus:ring-primary"
+                      />
+                      <span className="text-sm">{mcc.name}</span>
+                    </label>
+                  ))}
+                  {mccs.length === 0 && <p className="text-xs text-on-surface-variant italic">No MCCs found</p>}
+                </div>
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-bold uppercase opacity-60">Category</label>
@@ -296,15 +321,26 @@ export default function Sellers() {
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-bold uppercase opacity-60">MCC Assignment</label>
-                <select 
-                  value={selectedSeller.mccId} 
-                  onChange={e => setSelectedSeller({...selectedSeller, mccId: e.target.value})}
-                  className="w-full bg-surface-container-low border-none rounded-lg p-2 text-sm"
-                  required
-                >
-                  {mccs.map(mcc => <option key={mcc.id} value={mcc.id}>{mcc.name}</option>)}
-                </select>
+                <label className="text-xs font-bold uppercase opacity-60">MCC Assignments</label>
+                <div className="bg-surface-container-low rounded-lg p-3 max-h-40 overflow-y-auto space-y-2 border border-outline-variant/10">
+                  {mccs.map(mcc => (
+                    <label key={mcc.id} className="flex items-center gap-2 cursor-pointer hover:bg-black/5 p-1 rounded transition-colors">
+                      <input 
+                        type="checkbox"
+                        checked={selectedSeller.mccIds && selectedSeller.mccIds.includes(mcc.id)}
+                        onChange={e => {
+                          const currentIds = selectedSeller.mccIds || [];
+                          const newIds = e.target.checked 
+                            ? [...currentIds, mcc.id]
+                            : currentIds.filter(id => id !== mcc.id);
+                          setSelectedSeller({...selectedSeller, mccIds: newIds});
+                        }}
+                        className="rounded border-outline-variant text-primary focus:ring-primary"
+                      />
+                      <span className="text-sm">{mcc.name}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-bold uppercase opacity-60">Category</label>

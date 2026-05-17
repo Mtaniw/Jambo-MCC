@@ -6,10 +6,10 @@ import { useNavigate } from 'react-router-dom';
 import { LogIn, UserPlus, ShieldCheck, AlertCircle, CheckCircle2, Info, Eye, EyeOff } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { Logo } from '../components/Logo';
-
-const LOGO_URL = "https://lh3.googleusercontent.com/aida/ADBb0uiCdrgZRYj1Imqfwxw4sPIxAsPSjWWx9Pr0aWPDVa5-_Rm1bTwdZ2TLFhW-9ZAB_si9aC0BQ7OWnieEDClcJUNnVYZzCYGEOjCz46Rk3kz9jlvRTOYiGQbxtD6JkkLePDVYyPSa7uVt_Pn-CX089J9DKeBzfM7WtFQYcyTlaKUlN2Wwq8U5CzbopOmTC6RxHGJ2jHxaMWLhsCZWoJszc9TiUnsh8yKObLs_z8gAyDRt_1eCr6CAfRAoctphD9HyqNGn5mbYYfZvzw";
+import { useSettings } from '../hooks/useSettings';
 
 export default function Login() {
+  const { settings } = useSettings();
   const [isRegistering, setIsRegistering] = useState(false);
   const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [email, setEmail] = useState('');
@@ -40,7 +40,10 @@ export default function Login() {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   };
 
-  const getFriendlyErrorMessage = (code: string) => {
+  const getFriendlyErrorMessage = (err: any) => {
+    const code = err.code;
+    const message = err.message;
+
     switch (code) {
       case 'auth/user-not-found': return 'No account found with this email.';
       case 'auth/wrong-password': return 'Incorrect password. Please try again.';
@@ -48,7 +51,12 @@ export default function Login() {
       case 'auth/weak-password': return 'Password should be at least 6 characters.';
       case 'auth/invalid-email': return 'Please enter a valid email address.';
       case 'auth/network-request-failed': return 'Network error. Please check your connection.';
-      default: return 'An unexpected error occurred. Please try again.';
+      case 'auth/popup-blocked': return 'Sign-in popup was blocked by your browser. Please allow popups for this site.';
+      case 'auth/popup-closed-by-user': return 'The login window was closed before completion.';
+      case 'auth/cancelled-by-user': return 'Login was cancelled.';
+      default: 
+        console.error('Auth Error Details:', err);
+        return message || 'An unexpected error occurred. Please try again.';
     }
   };
 
@@ -92,7 +100,7 @@ export default function Login() {
         navigate('/');
       }
     } catch (err: any) {
-      setError(getFriendlyErrorMessage(err.code));
+      setError(getFriendlyErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -153,7 +161,7 @@ export default function Login() {
         }
       }
     } catch (err: any) {
-      setError(getFriendlyErrorMessage(err.code));
+      setError(getFriendlyErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -173,7 +181,7 @@ export default function Login() {
       setSuccess('Password reset email sent! Please check your inbox.');
       setTimeout(() => setShowForgotPassword(false), 5000);
     } catch (err: any) {
-      setError(getFriendlyErrorMessage(err.code));
+      setError(getFriendlyErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -199,8 +207,8 @@ export default function Login() {
           <div>
             <Logo variant="white" className="h-20 w-auto mb-4" />
             <div className="h-1 w-12 bg-secondary-container mb-8"></div>
-            <p className="text-lg leading-relaxed opacity-90 font-medium">MCC Management System</p>
-            <p className="text-sm font-light opacity-60">v1.0</p>
+            <p className="text-lg leading-relaxed opacity-90 font-medium">{settings.systemName || 'MCC Management System'}</p>
+            <p className="text-sm font-light opacity-60">{settings.companyName || 'Jambo Food Products Ltd'}</p>
           </div>
           <div className="mt-12">
             <div className="flex items-center gap-3 bg-white/10 p-4 rounded-lg">

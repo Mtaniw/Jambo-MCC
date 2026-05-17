@@ -80,7 +80,11 @@ async function startServer() {
   } else {
     console.log("Initializing Vite dev middleware...");
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { 
+        middlewareMode: true,
+        hmr: false,
+        watch: null, // Disable file watching to prevent HMR-related overhead
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);

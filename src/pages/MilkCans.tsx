@@ -7,6 +7,7 @@ import { Plus, Trash2, Edit2, X, Save, Search, Filter, Milk, Package, ArrowRight
 import { cn } from '../lib/utils';
 import { format, startOfMonth } from 'date-fns';
 import { getTanzaniaTodayStr, safeFormat, getTanzaniaDate } from '../lib/dateUtils';
+import { DateInput } from '../components/DateInput';
 import { TypeAhead } from '../components/TypeAhead';
 
 export default function MilkCans() {
@@ -86,7 +87,11 @@ export default function MilkCans() {
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'mccs'));
 
     const unsubscribeSellers = onSnapshot(collection(db, 'sellers'), (snapshot) => {
-      setSellers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setSellers(snapshot.docs.map(doc => {
+        const data = doc.data();
+        const smccIds = data.mccIds || (data.mccId ? [data.mccId] : []);
+        return { id: doc.id, ...data, mccIds: smccIds };
+      }));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'sellers'));
 
     const unsubscribeInventory = onSnapshot(collection(db, 'milk_can_inventory'), (snapshot) => {
@@ -594,7 +599,7 @@ export default function MilkCans() {
             <div className="space-y-1">
               <label className="text-xs font-bold uppercase tracking-wider">Seller</label>
               <TypeAhead
-                items={sellers.filter(s => s.mccId === formData.mccId || !formData.mccId)}
+                items={sellers.filter(s => (s.mccIds && s.mccIds.includes(formData.mccId)) || !formData.mccId)}
                 onSelect={(seller) => {
                   setFormData({
                     ...formData,
@@ -612,7 +617,10 @@ export default function MilkCans() {
                   });
                 }}
                 labelExtractor={(s) => s.name}
-                subLabelExtractor={(s) => mccs.find(m => m.id === s.mccId)?.name || ''}
+                subLabelExtractor={(s) => {
+                  if (!s.mccIds || s.mccIds.length === 0) return 'No MCC';
+                  return s.mccIds.map((id: string) => mccs.find(m => m.id === id)?.name).filter(Boolean).join(', ');
+                }}
                 placeholder="Type to search seller..."
                 defaultValue={formData.sellerName}
                 required
@@ -634,8 +642,11 @@ export default function MilkCans() {
               <input type="number" value={formData.quantity} onChange={e => setFormData({...formData, quantity: e.target.value})} className="w-full bg-surface-container-low border-none rounded-lg text-sm" required />
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-bold uppercase tracking-wider">Date Issued</label>
-              <input type="date" value={formData.dateIssued} onChange={e => setFormData({...formData, dateIssued: e.target.value})} className="w-full bg-surface-container-low border-none rounded-lg text-sm" required />
+              <DateInput 
+                value={formData.dateIssued} 
+                onChange={val => setFormData({...formData, dateIssued: val})}
+                label="Date Issued"
+              />
             </div>
             <div className="space-y-1">
               <label className="text-xs font-bold uppercase tracking-wider">Status</label>

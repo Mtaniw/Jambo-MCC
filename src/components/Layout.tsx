@@ -4,6 +4,7 @@ import { useAuth } from '../hooks/useAuth';
 import { auth } from '../firebase';
 import { signOut } from 'firebase/auth';
 import { 
+  Home as HomeIcon,
   LayoutDashboard, 
   ClipboardList, 
   Receipt, 
@@ -91,7 +92,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   };
 
   const navItems = [
-    { name: 'Dashboard', path: '/', icon: LayoutDashboard, roles: ['Super User', 'Admin', 'Cashier', 'Quality Controller', 'Supervisor', 'Manager', 'Director'] },
+    { name: 'Home', path: '/', icon: HomeIcon, roles: ['Super User', 'Admin', 'Cashier', 'Quality Controller', 'Supervisor', 'Manager', 'Director', 'Viewer', 'Factory Clerk'] },
+    { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard, roles: ['Super User', 'Admin', 'Cashier', 'Quality Controller', 'Supervisor', 'Manager', 'Director'] },
     { name: 'Daily Register', path: '/daily-register', icon: ClipboardList, roles: ['Super User', 'Admin', 'Cashier', 'Quality Controller', 'Supervisor', 'Manager', 'Director'] },
     { name: 'Expenses', path: '/expenses', icon: Receipt, roles: ['Super User', 'Admin', 'Cashier', 'Supervisor', 'Manager', 'Director'] },
     { name: 'Funds Received', path: '/funds', icon: Wallet, roles: ['Super User', 'Admin', 'Cashier', 'Quality Controller', 'Supervisor', 'Manager', 'Director'] },
@@ -170,22 +172,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   }, [showOnlineUsers]);
 
   useEffect(() => {
-    const title = globalSettings?.systemName || 'Jambo MCC Management System';
+    // BrandingManager handles base title and favicon
+    // We only update the title with page prefix here
+    const baseTitle = globalSettings?.systemName || 'Jambo MCC Management System';
     if (currentPage) {
-      document.title = `${currentPage.name} | ${title}`;
-    } else {
-      document.title = title;
-    }
-
-    // Update favicon if provided in settings
-    if (globalSettings?.favicon) {
-      let link: HTMLLinkElement | null = document.querySelector("link[rel~='icon']");
-      if (!link) {
-        link = document.createElement('link');
-        link.rel = 'icon';
-        document.head.appendChild(link);
-      }
-      link.href = globalSettings.favicon;
+      document.title = `${currentPage.name} | ${baseTitle}`;
     }
   }, [currentPage, globalSettings]);
 

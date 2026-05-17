@@ -7,6 +7,7 @@ import { Plus, Trash2, X, Save, Search, Filter, AlertTriangle, Clock, Beaker, Ca
 import { cn, formatNumber } from '../lib/utils';
 import { format, startOfMonth } from 'date-fns';
 import { getTanzaniaTodayStr, safeFormat, getTanzaniaDate } from '../lib/dateUtils';
+import { DateInput } from '../components/DateInput';
 import { TypeAhead } from '../components/TypeAhead';
 
 const REJECTION_REASONS = [
@@ -78,7 +79,11 @@ export default function Rejects() {
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'mccs'));
 
     const unsubscribeSellers = onSnapshot(collection(db, 'sellers'), (snapshot) => {
-      setSellers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setSellers(snapshot.docs.map(doc => {
+        const data = doc.data();
+        const smccIds = data.mccIds || (data.mccId ? [data.mccId] : []);
+        return { id: doc.id, ...data, mccIds: smccIds };
+      }));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'sellers'));
 
     return () => {
@@ -223,7 +228,7 @@ export default function Rejects() {
       <div className="bg-red-600 text-white p-6 rounded-2xl shadow-xl flex items-center justify-between overflow-hidden relative">
         <div className="relative z-10">
           <h2 className="text-lg font-bold opacity-80 uppercase tracking-widest mb-1">Total Milk Rejected</h2>
-          <p className="text-5xl font-black">{totalRejected.toLocaleString()} L</p>
+          <p className="text-5xl font-black">{formatNumber(totalRejected, 2)} L</p>
           <p className="text-xs mt-2 opacity-60">Cumulative rejection volume across all MCCs</p>
         </div>
         <AlertTriangle className="absolute -right-8 -bottom-8 w-48 h-48 opacity-10 rotate-12" />
@@ -243,25 +248,18 @@ export default function Rejects() {
           </div>
         </div>
 
-        <div className="w-44">
-          <label className="text-[10px] font-bold uppercase opacity-60 mb-1 block">From</label>
-          <input 
-            type="date" 
-            value={startDate}
-            onChange={e => setStartDate(e.target.value)}
-            className="w-full px-3 py-2 bg-surface-container-low border-none rounded-lg text-sm font-bold h-10"
-          />
-        </div>
-
-        <div className="w-44">
-          <label className="text-[10px] font-bold uppercase opacity-60 mb-1 block">To</label>
-          <input 
-            type="date" 
-            value={endDate}
-            onChange={e => setEndDate(e.target.value)}
-            className="w-full px-3 py-2 bg-surface-container-low border-none rounded-lg text-sm font-bold h-10"
-          />
-        </div>
+        <DateInput 
+          value={startDate} 
+          onChange={setStartDate} 
+          label="From"
+          className="w-44"
+        />
+        <DateInput 
+          value={endDate} 
+          onChange={setEndDate} 
+          label="To"
+          className="w-44"
+        />
 
         {isGlobalViewer && (
           <div className="w-44">
@@ -299,7 +297,7 @@ export default function Rejects() {
               <TypeAhead
                 items={sellers.filter(s => 
                   !formData.mccId || 
-                  s.mccId === formData.mccId || 
+                  (s.mccIds && s.mccIds.includes(formData.mccId)) || 
                   mccs.find(m => m.id === formData.mccId)?.name === s.mccId
                 )}
                 onSelect={(seller) => {
@@ -309,15 +307,21 @@ export default function Rejects() {
                   setFormData({...formData, sellerName: ''});
                 }}
                 labelExtractor={(s) => s.name}
-                subLabelExtractor={(s) => mccs.find(m => m.id === s.mccId)?.name || ''}
+                subLabelExtractor={(s) => {
+                  if (!s.mccIds || s.mccIds.length === 0) return 'No MCC';
+                  return s.mccIds.map((id: string) => mccs.find(m => m.id === id)?.name).filter(Boolean).join(', ');
+                }}
                 placeholder="Type to search seller..."
                 defaultValue={formData.sellerName}
                 required
               />
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-bold uppercase tracking-wider">Date</label>
-              <input type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} className="w-full bg-surface-container-low border-none rounded-lg text-sm" required />
+              <DateInput 
+                value={formData.date} 
+                onChange={val => setFormData({...formData, date: val})} 
+                label="Date"
+              />
             </div>
             <div className="space-y-1">
               <label className="text-xs font-bold uppercase tracking-wider">Time</label>
@@ -406,7 +410,7 @@ export default function Rejects() {
                   </td>
                 )}
                 <td className="px-6 py-4 text-sm font-bold">{rec.sellerName}</td>
-                <td className="px-6 py-4 text-sm font-black text-error">{formatNumber(rec.litersRejected, 1)} L</td>
+                <td className="px-6 py-4 text-sm font-black text-error">{formatNumber(rec.litersRejected, 2)} L</td>
                 <td className="px-6 py-4 text-sm">
                   <span className="font-bold text-primary">{rec.rejectionReason}</span>
                   <p className="text-[10px] opacity-60 truncate max-w-[150px]">

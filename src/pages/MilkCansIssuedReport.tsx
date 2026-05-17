@@ -7,6 +7,7 @@ import { Milk, Calendar, Search, Filter, Download, FileText, ArrowLeft } from 'l
 import { cn } from '../lib/utils';
 import { format, startOfMonth } from 'date-fns';
 import { safeFormat, getTanzaniaTodayStr, getTanzaniaDate } from '../lib/dateUtils';
+import { DateInput } from '../components/DateInput';
 import { useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -159,22 +160,18 @@ export default function MilkCansIssuedReport() {
         </div>
 
         <div className="w-44 space-y-1">
-          <label className="text-[10px] font-bold uppercase opacity-60">From</label>
-          <input 
-            type="date" 
+          <DateInput 
             value={startDate} 
-            onChange={e => setStartDate(e.target.value)} 
-            className="w-full h-10 px-3 bg-surface-container-low border-none rounded-lg text-sm font-bold transition-colors focus:bg-surface-container-high" 
+            onChange={setStartDate} 
+            label="From"
           />
         </div>
 
         <div className="w-44 space-y-1">
-          <label className="text-[10px] font-bold uppercase opacity-60">To</label>
-          <input 
-            type="date" 
+          <DateInput 
             value={endDate} 
-            onChange={e => setEndDate(e.target.value)} 
-            className="w-full h-10 px-3 bg-surface-container-low border-none rounded-lg text-sm font-bold transition-colors focus:bg-surface-container-high" 
+            onChange={setEndDate} 
+            label="To"
           />
         </div>
         {isGlobalViewer && (

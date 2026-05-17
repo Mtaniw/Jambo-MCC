@@ -15,6 +15,15 @@ const queryClient = new QueryClient({
   },
 });
 
+// Suppress benign development errors from Vite/HMR
+window.addEventListener('unhandledrejection', (event) => {
+  if (event.reason?.message?.includes('WebSocket closed without opened') || 
+      event.reason?.message?.includes('[vite] failed to connect to websocket')) {
+    event.preventDefault();
+    return;
+  }
+});
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>

@@ -4,7 +4,7 @@ import { db } from '../firebase';
 import { useAuth } from '../hooks/useAuth';
 import { handleFirestoreError, OperationType } from '../lib/errorHandlers';
 import { Search, Filter, Download, FileText, Table as TableIcon, FileDown, Printer, Share2, Calendar, AlertCircle, FileSpreadsheet, ChevronLeft, ChevronRight, Loader2, Edit2, Trash2, X, Save } from 'lucide-react';
-import { cn } from '../lib/utils';
+import { cn, formatNumber } from '../lib/utils';
 import { 
   format, 
   startOfDay, 
@@ -19,6 +19,7 @@ import {
   eachDayOfInterval
 } from 'date-fns';
 import { getTanzaniaDate, safeFormat, parseTanzaniaDate, getTanzaniaTodayStr } from '../lib/dateUtils';
+import { DateInput } from '../components/DateInput';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
@@ -82,7 +83,11 @@ export default function RejectReport() {
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'mccs'));
 
     const unsubscribeSellers = onSnapshot(collection(db, 'sellers'), (snapshot) => {
-      setSellers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setSellers(snapshot.docs.map(doc => {
+        const data = doc.data();
+        const smccIds = data.mccIds || (data.mccId ? [data.mccId] : []);
+        return { id: doc.id, ...data, mccIds: smccIds };
+      }));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'sellers'));
 
     return () => {
@@ -138,7 +143,7 @@ export default function RejectReport() {
       count: acc.count + 1
     }), { liters: 0, count: 0 });
 
-    const label = `${format(new Date(startDate), 'dd MMM')} - ${format(new Date(endDate), 'dd MMM yyyy')}`;
+    const label = `${format(new Date(startDate), 'dd/MM')} - ${format(new Date(endDate), 'dd/MM/yyyy')}`;
 
     return { rows, totals, label };
   }, [rejects, mccs, selectedMccId, searchTerm, startDate, endDate]);
@@ -193,7 +198,7 @@ export default function RejectReport() {
   const exportToExcel = () => {
     const data = reportData.rows.map(r => ({
       'No.': r.no,
-      'Date': r.date,
+      'Date': safeFormat(r.date, 'dd/MM/yyyy'),
       'MCC': r.mccName,
       'Seller': r.sellerName,
       'Liters Rejected': r.litersRejected,
@@ -204,7 +209,7 @@ export default function RejectReport() {
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Rejects');
-    XLSX.writeFile(wb, `Reject_Report_${startDate}_to_${endDate}.xlsx`);
+    XLSX.writeFile(wb, `Reject_Report_${safeFormat(startDate, 'dd-MM-yyyy')}_to_${safeFormat(endDate, 'dd-MM-yyyy')}.xlsx`);
   };
 
   const exportToPDF = () => {
@@ -214,7 +219,7 @@ export default function RejectReport() {
     doc.setFontSize(14);
     doc.text(`Reject Report - ${reportData.label}`, 14, 22);
     doc.setFontSize(10);
-    doc.text(`Generated: ${format(new Date(), 'PPP p')}`, 14, 28);
+    doc.text(`Generated: ${format(new Date(), 'dd/MM/yyyy HH:mm')}`, 14, 28);
     
     const tableData = reportData.rows.map(r => [
       r.no, 
@@ -301,21 +306,17 @@ export default function RejectReport() {
           </div>
         </div>
         <div className="w-44 space-y-1">
-          <label className="text-[10px] font-bold uppercase opacity-60">From</label>
-          <input 
-            type="date" 
+          <DateInput 
             value={startDate} 
-            onChange={e => setStartDate(e.target.value)}
-            className="w-full px-3 py-2 bg-surface-container-low border-none rounded-lg text-sm font-bold h-10 transition-colors focus:bg-surface-container-high"
+            onChange={setStartDate}
+            label="From"
           />
         </div>
         <div className="w-44 space-y-1">
-          <label className="text-[10px] font-bold uppercase opacity-60">To</label>
-          <input 
-            type="date" 
+          <DateInput 
             value={endDate} 
-            onChange={e => setEndDate(e.target.value)}
-            className="w-full px-3 py-2 bg-surface-container-low border-none rounded-lg text-sm font-bold h-10 transition-colors focus:bg-surface-container-high"
+            onChange={setEndDate}
+            label="To"
           />
         </div>
         <div className="w-48 space-y-1">
@@ -334,7 +335,7 @@ export default function RejectReport() {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="bg-white p-4 rounded-xl border border-outline-variant/20 shadow-sm">
           <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Total Liters Rejected</p>
-          <p className="text-2xl font-black text-error">{reportData.totals.liters.toFixed(1)} L</p>
+          <p className="text-2xl font-black text-error">{formatNumber(reportData.totals.liters, 2)} L</p>
         </div>
         <div className="bg-white p-4 rounded-xl border border-outline-variant/20 shadow-sm">
           <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Total Reject Cases</p>
@@ -360,10 +361,10 @@ export default function RejectReport() {
               {paginatedRows.map(row => (
                 <tr key={row.id} className="hover:bg-surface-container-lowest transition-colors">
                   <td className="px-6 py-4 text-on-surface-variant">{row.no}</td>
-                  <td className="px-6 py-4">{safeFormat(row.date, 'dd MMM yyyy')}</td>
+                  <td className="px-6 py-4">{safeFormat(row.date, 'dd/MM/yyyy')}</td>
                   <td className="px-6 py-4">{row.mccName}</td>
                   <td className="px-6 py-4 font-bold">{row.sellerName}</td>
-                  <td className="px-6 py-4 text-right font-bold text-error">{row.litersRejected.toFixed(1)}</td>
+                  <td className="px-6 py-4 text-right font-bold text-error">{formatNumber(row.litersRejected, 2)}</td>
                   <td className="px-6 py-4">
                     <span className="px-2 py-1 bg-error/10 text-error text-[10px] font-bold rounded-full uppercase">
                       {row.rejectionReason}
@@ -392,7 +393,7 @@ export default function RejectReport() {
               <tfoot className="bg-surface-container-low/50 font-bold border-t border-outline-variant/20">
                 <tr>
                   <td colSpan={4} className="px-6 py-5 text-right text-xs uppercase tracking-wider text-on-surface-variant">Grand Totals</td>
-                  <td className="px-6 py-5 text-right text-error text-base">{reportData.totals.liters.toFixed(1)} L</td>
+                  <td className="px-6 py-5 text-right text-error text-base">{formatNumber(reportData.totals.liters, 2)} L</td>
                   <td colSpan={2}></td>
                 </tr>
               </tfoot>
@@ -445,19 +446,25 @@ export default function RejectReport() {
                 <div className="space-y-1">
                   <label className="text-xs font-bold uppercase tracking-wider opacity-60">Seller Name</label>
                   <TypeAhead
-                    items={sellers.filter(s => !formData.mccId || s.mccId === formData.mccId || mccs.find(m => m.id === formData.mccId)?.name === s.mccId)}
+                    items={sellers.filter(s => !formData.mccId || (s.mccIds && s.mccIds.includes(formData.mccId)) || mccs.find(m => m.id === formData.mccId)?.name === s.mccId)}
                     onSelect={(seller) => setFormData({...formData, sellerName: seller.name})}
                     onClear={() => setFormData({...formData, sellerName: ''})}
                     labelExtractor={(s) => s.name}
-                    subLabelExtractor={(s) => mccs.find(m => m.id === s.mccId)?.name || ''}
+                    subLabelExtractor={(s) => {
+                      if (!s.mccIds || s.mccIds.length === 0) return 'No MCC';
+                      return s.mccIds.map((id: string) => mccs.find(m => m.id === id)?.name).filter(Boolean).join(', ');
+                    }}
                     placeholder="Type to search seller..."
                     defaultValue={formData.sellerName}
                     required
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-bold uppercase tracking-wider opacity-60">Date</label>
-                  <input type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} className="w-full bg-surface-container-low border-none rounded-lg p-3 text-sm" required />
+                  <DateInput 
+                    value={formData.date} 
+                    onChange={val => setFormData({...formData, date: val})}
+                    label="Date"
+                  />
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs font-bold uppercase tracking-wider opacity-60">Time</label>

@@ -11,14 +11,14 @@ export function getTanzaniaDate(): Date {
 }
 
 /**
- * Formats a date to yyyy-MM-dd in Tanzania time
+ * Returns today's date in yyyy-MM-dd format for internal logic/keys
  */
 export function getTanzaniaTodayStr(): string {
   return format(getTanzaniaDate(), 'yyyy-MM-dd');
 }
 
 /**
- * Gets the start of the current month in yyyy-MM-dd in Tanzania time
+ * Gets the start of the current month in yyyy-MM-dd for internal logic
  */
 export function getTanzaniaMonthStartStr(): string {
   const d = getTanzaniaDate();
@@ -41,7 +41,14 @@ export function parseTanzaniaDate(dateStr: string): Date {
 export function safeFormat(date: any, formatStr: string = 'dd/MM/yyyy', fallback: string = 'N/A'): string {
   try {
     if (!date) return fallback;
-    const d = new Date(date);
+    let d: Date;
+    
+    if (typeof date === 'string' && date.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      d = parseTanzaniaDate(date);
+    } else {
+      d = new Date(date);
+    }
+    
     if (isNaN(d.getTime())) return fallback;
     return format(d, formatStr);
   } catch (e) {

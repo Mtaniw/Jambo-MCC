@@ -7,6 +7,7 @@ import { Truck, CheckCircle2, AlertCircle, Save, Search, QrCode, X, Beaker, Chev
 import { cn, formatNumber } from '../lib/utils';
 import { format, startOfMonth } from 'date-fns';
 import { safeFormat, getTanzaniaTodayStr, getTanzaniaDate } from '../lib/dateUtils';
+import { DateInput } from '../components/DateInput';
 import { RESAZURIN_SCALE, getResazurinGrade } from '../lib/qualityConstants';
 import { ResazurinBadge } from '../components/ResazurinBadge';
 import { Html5QrcodeScanner } from 'html5-qrcode';
@@ -92,7 +93,7 @@ export default function FactoryIntake() {
     await updateDoc(docRef, {
       qtyReceived: received,
       qtyRejected: Number(intakeData.qtyRejected),
-      qtyDifference: litresLoaded - received,
+      qtyDifference: received - litresLoaded,
       factoryResazurin: intakeData.resazurin,
       factoryTemp: Number(intakeData.temp),
       factoryPh: Number(intakeData.ph),
@@ -119,16 +120,16 @@ export default function FactoryIntake() {
     doc.setFontSize(18);
     doc.text('Factory Milk Intake Report', 14, 22);
     doc.setFontSize(11);
-    doc.text(`Generated on: ${format(new Date(), 'PPP p')}`, 14, 30);
+    doc.text(`Generated on: ${format(new Date(), 'dd/MM/yyyy HH:mm')}`, 14, 30);
 
     const tableData = filteredRecords.map(rec => [
       safeFormat(rec.date, 'dd/MM/yyyy'),
       mccs.find(m => m.id === rec.mccId)?.name || 'Unknown',
       rec.truckReg,
       rec.driverName,
-      `${rec.litresLoaded} L`,
-      `${rec.qtyReceived || 0} L`,
-      `${(rec.litresLoaded - (rec.qtyReceived || 0))} L`,
+      `${formatNumber(rec.litresLoaded, 2)} L`,
+      `${formatNumber(rec.qtyReceived || 0, 2)} L`,
+      `${(Number(rec.qtyReceived || 0) - Number(rec.litresLoaded)) > 0 ? '+' : ''}${formatNumber((Number(rec.qtyReceived || 0) - Number(rec.litresLoaded)), 2)} L`,
       rec.factoryStatus || 'Pending'
     ]);
 
@@ -140,18 +141,18 @@ export default function FactoryIntake() {
       headStyles: { fillColor: [0, 102, 204] }
     });
 
-    doc.save(`factory_intake_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
+    doc.save(`factory_intake_${format(new Date(), 'dd-MM-yyyy')}.pdf`);
   };
 
   const exportToExcel = () => {
     const data = filteredRecords.map(rec => ({
-      Date: safeFormat(rec.date, 'yyyy-MM-dd'),
+      Date: safeFormat(rec.date, 'dd/MM/yyyy'),
       MCC: mccs.find(m => m.id === rec.mccId)?.name || 'Unknown',
       Truck: rec.truckReg,
       Driver: rec.driverName,
       'Sent (L)': rec.litresLoaded,
       'Received (L)': rec.qtyReceived || 0,
-      'Difference (L)': (rec.litresLoaded - (rec.qtyReceived || 0)),
+      'Difference (L)': (rec.qtyReceived || 0) - rec.litresLoaded,
       'Rejected (L)': rec.qtyRejected || 0,
       'MCC Resazurin': rec.resazurin,
       'Factory Resazurin': rec.factoryResazurin,
@@ -162,7 +163,7 @@ export default function FactoryIntake() {
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Intake");
-    XLSX.writeFile(wb, `factory_intake_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
+    XLSX.writeFile(wb, `factory_intake_${format(new Date(), 'dd/MM/yyyy')}.xlsx`);
   };
 
   const handleShare = async () => {
@@ -176,17 +177,18 @@ export default function FactoryIntake() {
           mccs.find(m => m.id === rec.mccId)?.name || 'Unknown',
           rec.truckReg,
           rec.driverName,
-          `${rec.litresLoaded} L`,
-          `${rec.qtyReceived || 0} L`,
+          `${formatNumber(rec.litresLoaded, 2)} L`,
+          `${formatNumber(rec.qtyReceived || 0, 2)} L`,
+          `${(Number(rec.qtyReceived || 0) - Number(rec.litresLoaded)) > 0 ? '+' : ''}${formatNumber((Number(rec.qtyReceived || 0) - Number(rec.litresLoaded)), 2)} L`,
           rec.factoryStatus || 'Pending'
         ]);
         (doc as any).autoTable({
           startY: 30,
-          head: [['Date', 'MCC', 'Truck', 'Driver', 'Sent', 'Received', 'Status']],
+          head: [['Date', 'MCC', 'Truck', 'Driver', 'Sent', 'Received', 'Diff', 'Status']],
           body: tableData,
         });
         const pdfBlob = doc.output('blob');
-        const file = new File([pdfBlob], `factory_intake_${format(new Date(), 'yyyy-MM-dd')}.pdf`, { type: 'application/pdf' });
+        const file = new File([pdfBlob], `factory_intake_${format(new Date(), 'dd-MM-yyyy')}.pdf`, { type: 'application/pdf' });
 
         await navigator.share({
           title: 'Factory Milk Intake Report',
@@ -202,12 +204,29 @@ export default function FactoryIntake() {
   };
 
   const filteredRecords = useMemo(() => {
-    return records.filter(rec => {
-      const matchesSearch = rec.truckReg.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                           rec.driverName.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesMcc = mccFilter === 'all' || rec.mccId === mccFilter;
-      return matchesSearch && matchesMcc;
-    });
+    return records
+      .filter(rec => {
+        const matchesSearch = (rec.truckReg || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                             (rec.driverName || '').toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesMcc = mccFilter === 'all' || rec.mccId === mccFilter;
+        return matchesSearch && matchesMcc;
+      })
+      .sort((a, b) => {
+        // LIFO: Most recent date first
+        const dateA = a.date || '';
+        const dateB = b.date || '';
+        if (dateB !== dateA) return dateB.localeCompare(dateA);
+        
+        // Fallback to createdAt for entries on same day
+        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        if (timeB !== timeA) return timeB - timeA;
+
+        // Final fallback to receivedAt if exists
+        const recA = a.receivedAt ? new Date(a.receivedAt).getTime() : 0;
+        const recB = b.receivedAt ? new Date(b.receivedAt).getTime() : 0;
+        return recB - recA;
+      });
   }, [records, searchTerm, mccFilter]);
 
   useEffect(() => {
@@ -216,6 +235,29 @@ export default function FactoryIntake() {
 
   const totalPages = Math.ceil(filteredRecords.length / pageSize);
   const paginatedRecords = filteredRecords.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
+  const stats = useMemo(() => {
+    return filteredRecords.reduce((acc, rec) => {
+      const loaded = Number(rec.litresLoaded || 0);
+      const received = Number(rec.qtyReceived || 0);
+      const rejected = Number(rec.qtyRejected || 0);
+      
+      acc.totalLoaded += loaded;
+      acc.totalReceived += received;
+      acc.totalRejected += rejected;
+      // Only count difference for received records
+      if (rec.factoryStatus === 'Received') {
+        acc.totalDiff += (received - loaded);
+      }
+      
+      return acc;
+    }, {
+      totalLoaded: 0,
+      totalReceived: 0,
+      totalRejected: 0,
+      totalDiff: 0
+    });
+  }, [filteredRecords]);
 
   if (loading) return <div className="flex justify-center p-10"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div></div>;
 
@@ -254,6 +296,61 @@ export default function FactoryIntake() {
         </div>
       </div>
 
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-white p-6 rounded-xl border border-outline-variant/20 shadow-sm relative overflow-hidden group hover:shadow-md transition-all">
+          <div className="absolute top-0 right-0 w-24 h-24 bg-primary/5 rounded-full -mr-8 -mt-8 transition-transform group-hover:scale-110"></div>
+          <div className="relative z-10 flex flex-col h-full">
+            <div className="flex items-center gap-2 text-primary mb-2">
+              <Truck size={18} />
+              <span className="text-[10px] font-bold uppercase tracking-widest">Total Dispatched</span>
+            </div>
+            <div className="mt-auto">
+              <h2 className="text-3xl font-black text-on-surface">{formatNumber(stats.totalLoaded, 2)} L</h2>
+              <p className="text-[10px] text-on-surface-variant mt-1 font-medium italic">Estimated volume sent from MCCs</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-xl border border-outline-variant/20 shadow-sm relative overflow-hidden group hover:shadow-md transition-all">
+          <div className="absolute top-0 right-0 w-24 h-24 bg-green-50 rounded-full -mr-8 -mt-8 transition-transform group-hover:scale-110"></div>
+          <div className="relative z-10 flex flex-col h-full">
+            <div className="flex items-center gap-2 text-green-600 mb-2">
+                <CheckCircle2 size={18} />
+                <span className="text-[10px] font-bold uppercase tracking-widest">Actual Received</span>
+            </div>
+            <div className="mt-auto">
+                <h2 className="text-3xl font-black text-on-surface">{formatNumber(stats.totalReceived, 2)} L</h2>
+                <p className="text-[10px] text-on-surface-variant mt-1 font-medium italic">Volume verified at factory intake</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-xl border border-outline-variant/20 shadow-sm relative overflow-hidden group hover:shadow-md transition-all">
+          <div className={cn(
+            "absolute top-0 right-0 w-24 h-24 rounded-full -mr-8 -mt-8 transition-transform group-hover:scale-110",
+            stats.totalDiff >= 0 ? "bg-green-50" : "bg-red-50"
+          )}></div>
+          <div className="relative z-10 flex flex-col h-full">
+            <div className={cn(
+              "flex items-center gap-2 mb-2",
+              stats.totalDiff >= 0 ? "text-green-600" : "text-error"
+            )}>
+                <AlertCircle size={18} />
+                <span className="text-[10px] font-bold uppercase tracking-widest">Total Difference</span>
+            </div>
+            <div className="mt-auto">
+                <h2 className={cn(
+                  "text-3xl font-black",
+                  stats.totalDiff >= 0 ? "text-green-600" : "text-error"
+                )}>
+                  {stats.totalDiff > 0 ? '+' : ''}{formatNumber(stats.totalDiff, 2)} L
+                </h2>
+                <p className="text-[10px] text-on-surface-variant mt-1 font-medium italic">Variance between sent and received</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div className="space-y-4">
         <div className="bg-white p-4 rounded-xl border border-outline-variant/20 shadow-sm flex flex-wrap gap-4 items-end">
           <div className="flex-1 min-w-[300px] space-y-1">
@@ -270,22 +367,18 @@ export default function FactoryIntake() {
           </div>
           
           <div className="w-40 space-y-1">
-            <label className="text-[10px] font-bold uppercase opacity-60">From</label>
-            <input 
-              type="date" 
+            <DateInput 
               value={startDate}
-              onChange={e => setStartDate(e.target.value)}
-              className="w-full px-3 py-2 bg-surface-container-low border-none rounded-lg text-sm font-bold h-10"
+              onChange={setStartDate}
+              label="From"
             />
           </div>
 
           <div className="w-40 space-y-1">
-            <label className="text-[10px] font-bold uppercase opacity-60">To</label>
-            <input 
-              type="date" 
+            <DateInput 
               value={endDate}
-              onChange={e => setEndDate(e.target.value)}
-              className="w-full px-3 py-2 bg-surface-container-low border-none rounded-lg text-sm font-bold h-10"
+              onChange={setEndDate}
+              label="To"
             />
           </div>
 
@@ -322,7 +415,7 @@ export default function FactoryIntake() {
       </div>
 
       <div className="grid grid-cols-1 gap-4">
-        {paginatedRecords.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).map(rec => {
+        {paginatedRecords.map(rec => {
           const isExpanded = expandedId === rec.id;
           const isTempFail = rec.tempAtLoading > 6;
           const isPhFail = rec.ph < 6.6 || rec.ph > 6.8;
@@ -348,22 +441,40 @@ export default function FactoryIntake() {
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-on-surface-variant">
                       <span className="flex items-center gap-1 font-bold"><Calendar size={12} /> Sent: {safeFormat(rec.date, 'dd/MM/yyyy')}</span>
                       <span>•</span>
-                      <span className="flex items-center gap-1 font-bold text-primary"><Calendar size={12} /> Received: {rec.receivedAt ? safeFormat(rec.receivedAt, 'dd/MM/yyyy') : 'Pending'}</span>
+                      <span className="flex items-center gap-1 font-bold text-green-600"><Calendar size={12} /> Received: {rec.receivedAt ? safeFormat(rec.receivedAt, 'dd/MM/yyyy') : 'Pending'}</span>
                       <span>•</span>
                       <span>{rec.driverName}</span>
                       <span>•</span>
-                      <span className="font-bold text-primary">{mccs.find(m => m.id === rec.mccId)?.name || 'Unknown MCC'}</span>
+                      <span className={cn(
+                        "font-bold",
+                        rec.factoryStatus === 'Received' ? "text-green-600" : "text-amber-500"
+                      )}>{mccs.find(m => m.id === rec.mccId)?.name || 'Unknown MCC'}</span>
                     </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-6">
                   <div className="text-center">
                     <p className="text-[10px] font-bold uppercase text-on-surface-variant">Dispatched</p>
-                    <p className="font-bold">{rec.litresLoaded} L</p>
+                    <p className="font-bold text-green-600">{formatNumber(rec.litresLoaded, 2)} L</p>
                   </div>
                   <div className="text-center">
+                    <p className="text-[10px] font-bold uppercase text-on-surface-variant">Received</p>
+                    <p className="font-bold text-primary">{rec.qtyReceived ? `${formatNumber(rec.qtyReceived, 2)} L` : '---'}</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-[10px] font-bold uppercase text-on-surface-variant">Diff</p>
+                    <p className={cn(
+                      "font-bold",
+                      !rec.qtyReceived ? "text-on-surface/30" :
+                      (Number(rec.qtyReceived) - Number(rec.litresLoaded)) > 0 ? "text-green-600" : 
+                      (Number(rec.qtyReceived) - Number(rec.litresLoaded)) < 0 ? "text-error" : "text-on-surface/30"
+                    )}>
+                      {rec.qtyReceived ? `${(Number(rec.qtyReceived) - Number(rec.litresLoaded)) > 0 ? '+' : ''}${formatNumber(Number(rec.qtyReceived) - Number(rec.litresLoaded), 2)} L` : '---'}
+                    </p>
+                  </div>
+                  <div className="text-center hidden sm:block">
                     <p className="text-[10px] font-bold uppercase text-on-surface-variant">Weight</p>
-                    <p className="font-bold">{rec.weightKg} KG</p>
+                    <p className="font-bold">{formatNumber(rec.weightKg, 2)} KG</p>
                   </div>
                   <div className="flex items-center gap-3">
                     <div className={cn(
@@ -385,7 +496,7 @@ export default function FactoryIntake() {
                         <Beaker size={12} /> Temperature
                       </p>
                       <p className={cn("font-bold", isTempFail ? "text-error" : "text-green-600")}>
-                        {rec.tempAtLoading}°C
+                        {formatNumber(rec.tempAtLoading, 2)}°C
                       </p>
                       <p className="text-[10px] opacity-60">{isTempFail ? 'Above Limit (>6°C)' : 'Within Limit'}</p>
                     </div>
@@ -394,7 +505,7 @@ export default function FactoryIntake() {
                         <Beaker size={12} /> pH Level
                       </p>
                       <p className={cn("font-bold", isPhFail ? "text-error" : "text-green-600")}>
-                        {rec.ph}
+                        {formatNumber(rec.ph, 2)}
                       </p>
                       <p className="text-[10px] opacity-60">{isPhFail ? 'Out of Range (6.6-6.8)' : 'Normal Range'}</p>
                     </div>
@@ -426,16 +537,25 @@ export default function FactoryIntake() {
                         <Beaker size={12} /> Factory Temp
                       </p>
                       <p className={cn("font-bold", (rec.factoryTemp || 0) > 6 ? "text-error" : "text-green-600")}>
-                        {rec.factoryTemp ? `${rec.factoryTemp}°C` : 'N/A'}
+                        {rec.factoryTemp ? `${formatNumber(rec.factoryTemp, 2)}°C` : 'N/A'}
                       </p>
                     </div>
                     <div className="bg-white p-3 rounded-lg border border-outline-variant/10">
                       <p className="text-[10px] font-bold uppercase text-on-surface-variant mb-1 flex items-center gap-1">
                         <Beaker size={12} /> Factory pH
                       </p>
-                      <p className={cn("font-bold", (rec.factoryPh < 6.6 || rec.factoryPh > 6.8) ? "text-error" : "text-green-600")}>
-                        {rec.factoryPh || 'N/A'}
+                      <p className={cn("font-bold", (Number(rec.factoryPh) < 6.6 || Number(rec.factoryPh) > 6.8) ? "text-error" : "text-green-600")}>
+                        {rec.factoryPh ? formatNumber(rec.factoryPh, 2) : 'N/A'}
                       </p>
+                    </div>
+                    <div className="bg-white p-3 rounded-lg border border-outline-variant/10">
+                      <p className="text-[10px] font-bold uppercase text-on-surface-variant mb-1 flex items-center gap-1">
+                        <Beaker size={12} /> Density
+                      </p>
+                      <p className={cn("font-bold", (Number(rec.density) < 1.028 || Number(rec.density) > 1.032) ? "text-error" : "text-green-600")}>
+                        {formatNumber(rec.density, 3)}
+                      </p>
+                      <p className="text-[10px] opacity-60">MCC Lab Result</p>
                     </div>
                     <div className="bg-white p-3 rounded-lg border border-outline-variant/10">
                       <p className="text-[10px] font-bold uppercase text-on-surface-variant mb-1 flex items-center gap-1">
@@ -460,12 +580,10 @@ export default function FactoryIntake() {
               {editingId === rec.id ? (
                 <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
                   <div className="space-y-1">
-                    <label className="text-[10px] font-bold uppercase">Received Date</label>
-                    <input 
-                      type="date" 
+                    <DateInput 
                       value={intakeData.receivedAt} 
-                      onChange={e => setIntakeData({...intakeData, receivedAt: e.target.value})}
-                      className="w-full bg-white border-outline-variant/30 rounded-lg text-sm"
+                      onChange={val => setIntakeData({...intakeData, receivedAt: val})}
+                      label="Received Date"
                     />
                   </div>
                   <div className="space-y-1">
@@ -483,10 +601,11 @@ export default function FactoryIntake() {
                     <input 
                       type="text"
                       readOnly
-                      value={`${(Number(rec.litresLoaded) - Number(intakeData.qtyReceived || 0)).toLocaleString()} L`}
+                      value={(intakeData.qtyReceived && rec.factoryStatus === 'Received') ? `${(Number(intakeData.qtyReceived || 0) - Number(rec.litresLoaded)) > 0 ? '+' : ''}${formatNumber(Number(intakeData.qtyReceived || 0) - Number(rec.litresLoaded), 2)} L` : ''}
                       className={cn(
                         "w-full bg-surface-container-low border-outline-variant/30 rounded-lg text-sm font-bold",
-                        (Number(rec.litresLoaded) - Number(intakeData.qtyReceived || 0)) > 0 ? "text-error" : "text-green-600"
+                        (Number(intakeData.qtyReceived || 0) - Number(rec.litresLoaded)) > 0 ? "text-green-600" : 
+                        (Number(intakeData.qtyReceived || 0) - Number(rec.litresLoaded)) < 0 ? "text-error" : "text-on-surface-variant"
                       )}
                     />
                   </div>
@@ -592,20 +711,30 @@ export default function FactoryIntake() {
                   <div className="flex gap-8">
                     <div>
                       <p className="text-[10px] font-bold uppercase text-on-surface-variant">Actual Received</p>
-                      <p className={cn("font-bold text-lg", rec.qtyReceived ? "text-primary" : "text-on-surface/30")}>
-                        {rec.qtyReceived ? `${formatNumber(rec.qtyReceived, 1)} L` : '---'}
+                      <p className={cn(
+                        "font-bold text-lg",
+                        rec.qtyReceived 
+                          ? (Number(rec.qtyReceived) >= Number(rec.litresLoaded) ? "text-green-600" : "text-error")
+                          : "text-on-surface/30"
+                      )}>
+                        {rec.qtyReceived ? `${formatNumber(rec.qtyReceived, 2)} L` : '---'}
                       </p>
                     </div>
                     <div>
                       <p className="text-[10px] font-bold uppercase text-on-surface-variant">Rejected</p>
                       <p className={cn("font-bold text-lg", rec.qtyRejected > 0 ? "text-error" : "text-on-surface/30")}>
-                        {rec.qtyRejected ? `${formatNumber(rec.qtyRejected, 1)} L` : '---'}
+                        {rec.qtyRejected ? `${formatNumber(rec.qtyRejected, 2)} L` : '---'}
                       </p>
                     </div>
                     <div>
                       <p className="text-[10px] font-bold uppercase text-on-surface-variant">Difference</p>
-                      <p className={cn("font-bold text-lg", (Number(rec.litresLoaded) - Number(rec.qtyReceived || 0)) !== 0 ? "text-error" : "text-green-600")}>
-                        {rec.qtyReceived ? `${formatNumber(Number(rec.litresLoaded) - Number(rec.qtyReceived), 1)} L` : '---'}
+                      <p className={cn(
+                        "font-bold text-lg", 
+                        rec.qtyReceived && rec.factoryStatus === 'Received'
+                          ? ((Number(rec.qtyReceived) - Number(rec.litresLoaded)) >= 0 ? "text-green-600" : "text-error")
+                          : "text-on-surface-variant/30"
+                      )}>
+                        {rec.qtyReceived && rec.factoryStatus === 'Received' ? `${(Number(rec.qtyReceived) - Number(rec.litresLoaded)) > 0 ? '+' : ''}${formatNumber(Number(rec.qtyReceived) - Number(rec.litresLoaded), 2)} L` : ''}
                       </p>
                     </div>
                     {rec.factoryRemarks && (
@@ -641,7 +770,12 @@ export default function FactoryIntake() {
                             status: rec.factoryStatus || 'Received'
                           });
                         }}
-                        className="bg-primary/10 text-primary px-4 py-2 rounded-lg font-bold hover:bg-primary/20 transition-colors"
+                        className={cn(
+                          "px-4 py-2 rounded-lg font-bold transition-colors",
+                          rec.factoryStatus === 'Received' 
+                            ? "bg-green-100 text-green-600 hover:bg-green-200" 
+                            : "bg-primary/10 text-primary hover:bg-primary/20"
+                        )}
                       >
                         {rec.factoryStatus === 'Received' ? 'Update Intake' : 'Record Intake'}
                       </button>

@@ -19,6 +19,7 @@ import {
   startOfDay
 } from 'date-fns';
 import { getTanzaniaDate, safeFormat } from '../lib/dateUtils';
+import { DateInput } from '../components/DateInput';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
@@ -197,22 +198,22 @@ export default function WeeklyReport() {
       r.no,
       r.displayDate,
       r.sellers,
-      r.totalLiters.toFixed(1),
-      r.paidLiters.toFixed(1),
-      r.paidAmount.toLocaleString(),
-      r.unpaidAmount.toLocaleString(),
-      r.totalAmount.toLocaleString()
+      formatNumber(r.totalLiters, 2),
+      formatNumber(r.paidLiters, 2),
+      formatNumber(r.paidAmount, 0),
+      formatNumber(r.unpaidAmount, 0),
+      formatNumber(r.totalAmount, 0)
     ]);
 
     tableData.push([
       '',
       'TOTALS',
       reportData.totals.sellers,
-      reportData.totals.totalLiters.toFixed(1),
-      reportData.totals.paidLiters.toFixed(1),
-      reportData.totals.paidAmount.toLocaleString(),
-      reportData.totals.unpaidAmount.toLocaleString(),
-      reportData.totals.totalAmount.toLocaleString()
+      formatNumber(reportData.totals.totalLiters, 2),
+      formatNumber(reportData.totals.paidLiters, 2),
+      formatNumber(reportData.totals.paidAmount, 0),
+      formatNumber(reportData.totals.unpaidAmount, 0),
+      formatNumber(reportData.totals.totalAmount, 0)
     ]);
 
     (doc as any).autoTable({
@@ -282,30 +283,18 @@ export default function WeeklyReport() {
 
       {/* Filters */}
       <div className="bg-white p-4 rounded-xl shadow-sm border border-outline-variant/20 flex flex-wrap gap-4 items-end print:hidden">
-        <div className="flex-1 min-w-[150px]">
-          <label className="block text-xs font-bold text-on-surface-variant uppercase mb-1">From Date</label>
-          <div className="relative">
-            <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant" size={18} />
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-surface border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary/20 outline-none"
-            />
-          </div>
-        </div>
-        <div className="flex-1 min-w-[150px]">
-          <label className="block text-xs font-bold text-on-surface-variant uppercase mb-1">To Date</label>
-          <div className="relative">
-            <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant" size={18} />
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-surface border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary/20 outline-none"
-            />
-          </div>
-        </div>
+        <DateInput 
+          value={startDate} 
+          onChange={setStartDate} 
+          label="From Date"
+          className="flex-1 min-w-[150px]"
+        />
+        <DateInput 
+          value={endDate} 
+          onChange={setEndDate} 
+          label="To Date"
+          className="flex-1 min-w-[150px]"
+        />
         <div className="flex-1 min-w-[200px]">
           <label className="block text-xs font-bold text-on-surface-variant uppercase mb-1">Filter by MCC</label>
           <select
@@ -361,9 +350,9 @@ export default function WeeklyReport() {
                   <td className="px-6 py-4 text-sm font-medium text-on-surface-variant">{row.no}</td>
                   <td className="px-6 py-4 text-sm font-bold text-on-surface group-hover:text-primary transition-colors">{row.displayDate}</td>
                   <td className="px-6 py-4 text-sm text-center">{row.sellers}</td>
-                  <td className="px-6 py-4 text-sm text-right font-medium">{formatNumber(row.totalLiters, 1)}</td>
-                  <td className="px-6 py-4 text-sm text-right text-error font-medium">{formatNumber(row.rejectedLiters, 1)}</td>
-                  <td className="px-6 py-4 text-sm text-right text-green-600">{formatNumber(row.paidLiters, 1)}</td>
+                  <td className="px-6 py-4 text-sm text-right font-medium">{formatNumber(row.totalLiters, 2)}</td>
+                  <td className="px-6 py-4 text-sm text-right text-error font-medium">{formatNumber(row.rejectedLiters, 2)}</td>
+                  <td className="px-6 py-4 text-sm text-right text-green-600">{formatNumber(row.paidLiters, 2)}</td>
                   <td className="px-6 py-4 text-sm text-right font-bold">{formatNumber(row.paidAmount, 0)}</td>
                   <td className="px-6 py-4 text-sm text-right text-red-600">{formatNumber(row.unpaidAmount, 0)}</td>
                   <td className="px-6 py-4 text-sm text-right font-black text-primary">{formatNumber(row.totalAmount, 0)}</td>
@@ -381,9 +370,9 @@ export default function WeeklyReport() {
               <tr className="font-black text-on-surface">
                 <td colSpan={2} className="px-6 py-4 text-right uppercase tracking-wider text-xs">Grand Totals</td>
                 <td className="px-6 py-4 text-center">{reportData.totals.sellers}</td>
-                <td className="px-6 py-4 text-right">{formatNumber(reportData.totals.totalLiters, 1)}</td>
-                <td className="px-6 py-4 text-right text-error">{formatNumber(reportData.totals.rejectedLiters, 1)}</td>
-                <td className="px-6 py-4 text-right text-green-600">{formatNumber(reportData.totals.paidLiters, 1)}</td>
+                <td className="px-6 py-4 text-right">{formatNumber(reportData.totals.totalLiters, 2)}</td>
+                <td className="px-6 py-4 text-right text-error">{formatNumber(reportData.totals.rejectedLiters, 2)}</td>
+                <td className="px-6 py-4 text-right text-green-600">{formatNumber(reportData.totals.paidLiters, 2)}</td>
                 <td className="px-6 py-4 text-right">{formatNumber(reportData.totals.paidAmount, 0)}</td>
                 <td className="px-6 py-4 text-right text-red-600">{formatNumber(reportData.totals.unpaidAmount, 0)}</td>
                 <td className="px-6 py-4 text-right text-primary text-lg">{formatNumber(reportData.totals.totalAmount, 0)}</td>
@@ -394,7 +383,7 @@ export default function WeeklyReport() {
       </div>
 
       <div className="hidden print:block mt-10 text-center text-[10px] text-on-surface-variant">
-        Report generated on {format(getTanzaniaDate(), 'PPP pp')} | Jambo MCC Management System
+        Report generated on {format(getTanzaniaDate(), 'dd/MM/yyyy HH:mm')} | Jambo MCC Management System
       </div>
     </div>
   );

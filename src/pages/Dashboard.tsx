@@ -1,5 +1,17 @@
 import { useState, useEffect, useMemo } from 'react';
-import { collection, query, where, onSnapshot, getDocs, sum, doc, orderBy, limit } from 'firebase/firestore';
+import { 
+  collection, 
+  query, 
+  where, 
+  onSnapshot, 
+  getDocs, 
+  doc, 
+  orderBy, 
+  limit,
+  getAggregateFromServer,
+  sum,
+  count
+} from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../hooks/useAuth';
 import { useNavigate, Link } from 'react-router-dom';
@@ -16,11 +28,13 @@ import {
   BarChart3,
   Calendar,
   Loader2,
-  Truck
+  Truck,
+  CheckCircle2
 } from 'lucide-react';
 import { cn, formatNumber } from '../lib/utils';
-import { format, startOfDay, subDays, startOfWeek, startOfMonth, eachDayOfInterval, isSameDay, isSameWeek, isSameMonth } from 'date-fns';
+import { format, startOfDay, subDays, subMonths, startOfWeek, startOfMonth, eachDayOfInterval, isSameDay, isSameWeek, isSameMonth } from 'date-fns';
 import { safeFormat, getTanzaniaTodayStr, getTanzaniaDate } from '../lib/dateUtils';
+import { DateInput } from '../components/DateInput';
 import { 
   BarChart, 
   Bar, 
@@ -41,6 +55,8 @@ interface Stats {
   totalExpenses: number;
   uniqueSellers: number;
   netBalance: number;
+  totalSent: number;
+  totalReceived: number;
 }
 
 const MCC_COLORS = [
@@ -63,7 +79,9 @@ export default function Dashboard() {
     totalUnpaid: 0,
     totalExpenses: 0,
     uniqueSellers: 0,
-    netBalance: 0
+    netBalance: 0,
+    totalSent: 0,
+    totalReceived: 0
   });
   const [milkCanStats, setMilkCanStats] = useState({
     issued: 0,
@@ -187,20 +205,51 @@ export default function Dashboard() {
     let sellersQuery = query(collection(db, 'sellers'));
     if (!isGlobalViewer) {
       if (canQuery) {
-        sellersQuery = query(collection(db, 'sellers'), where('mccId', 'in', mccIds));
+        sellersQuery = query(collection(db, 'sellers'), where('mccIds', 'array-contains-any', mccIds));
       }
     } else if (selectedMccId !== 'all') {
-      sellersQuery = query(collection(db, 'sellers'), where('mccId', '==', selectedMccId));
+      sellersQuery = query(collection(db, 'sellers'), where('mccIds', 'array-contains', selectedMccId));
     }
 
     const unsubscribeSellers = onSnapshot(sellersQuery, (snapshot) => {
-      const sellersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const sellersData = snapshot.docs.map(doc => {
+        const data = doc.data();
+        const smccIds = data.mccIds || (data.mccId ? [data.mccId] : []);
+        return { id: doc.id, ...data, mccIds: smccIds };
+      });
       setSellers(sellersData);
       const activeCount = sellersData.filter((s: any) => s.active !== false).length;
       setStats(prev => ({ ...prev, uniqueSellers: activeCount }));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'sellers'));
 
-    // Fetch Recent Tankers
+    // Fetch Tankers for Stats
+    let allTankersQuery = query(collection(db, 'truck_qa'), where('date', '>=', startDate), where('date', '<=', endDate));
+    if (!isGlobalViewer) {
+      if (canQuery) {
+        allTankersQuery = query(collection(db, 'truck_qa'), where('mccId', 'in', mccIds), where('date', '>=', startDate), where('date', '<=', endDate));
+      }
+    } else if (selectedMccId !== 'all') {
+      allTankersQuery = query(collection(db, 'truck_qa'), where('mccId', '==', selectedMccId), where('date', '>=', startDate), where('date', '<=', endDate));
+    }
+
+    const unsubscribeAllTankers = onSnapshot(allTankersQuery, (snapshot) => {
+      let sent = 0;
+      let received = 0;
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        sent += (Number(data.litresLoaded) || 0);
+        if (data.factoryStatus === 'Received') {
+          received += (Number(data.qtyReceived) || 0);
+        }
+      });
+      setStats(prev => ({
+        ...prev,
+        totalSent: sent,
+        totalReceived: received
+      }));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'truck_qa'));
+
+    // Recent Tankers Query
     let tankerQuery = query(collection(db, 'truck_qa'), where('date', '>=', startDate), where('date', '<=', endDate), orderBy('date', 'desc'), limit(5));
     if (!isGlobalViewer) {
       if (canQuery) {
@@ -260,13 +309,13 @@ export default function Dashboard() {
         });
 
         totalMilkPurchases = milkPurchases;
-        setAllEntries(entries);
         setStats(prev => ({
           ...prev,
           totalLitres: litres,
           totalPaid: paid,
           totalUnpaid: unpaid
         }));
+        setAllEntries(entries);
         updateNetBalance();
         setRecentEntries(entries.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 5));
         setLoading(false);
@@ -292,12 +341,12 @@ export default function Dashboard() {
 
     if (canQuery) {
       unsubscribeMoney = onSnapshot(moneyQuery, (snapshot) => {
-        totalReceived = snapshot.docs.reduce((sum, doc) => sum + (doc.data().amountReceived || 0), 0);
+        totalReceived = snapshot.docs.reduce((sum, doc) => sum + (Number(doc.data().amountReceived) || 0), 0);
         updateNetBalance();
       }, (error) => handleFirestoreError(error, OperationType.LIST, 'money_received'));
 
       unsubscribeExpenses = onSnapshot(expensesQuery, (snapshot) => {
-        totalExpenses = snapshot.docs.reduce((sum, doc) => sum + (doc.data().total || 0), 0);
+        totalExpenses = snapshot.docs.reduce((sum, doc) => sum + (Number(doc.data().total) || 0), 0);
         updateNetBalance();
       }, (error) => handleFirestoreError(error, OperationType.LIST, 'expenses'));
     }
@@ -319,8 +368,8 @@ export default function Dashboard() {
         let returned = 0;
         snapshot.forEach((doc) => {
           const data = doc.data();
-          if (data.status === 'Taken') issued += data.quantity;
-          else returned += data.quantity;
+          if (data.status === 'Taken') issued += (Number(data.quantity) || 0);
+          else returned += (Number(data.quantity) || 0);
         });
         setMilkCanStats({ issued, returned });
       }, (error) => handleFirestoreError(error, OperationType.LIST, 'milk_cans'));
@@ -345,17 +394,8 @@ export default function Dashboard() {
     if (canQuery) {
       unsubscribeRejects = onSnapshot(rejectsQuery, (snapshot) => {
         let totalLitres = 0;
-        const today = getTanzaniaTodayStr();
         snapshot.forEach((doc) => {
-          const data = doc.data();
-          // Fallback for mccId matching (check ID or Name)
-          const mccMatch = selectedMccId === 'all' || 
-                           data.mccId === selectedMccId || 
-                           mccs.find(m => m.id === selectedMccId)?.name === data.mccId;
-          
-          if (mccMatch) {
-            totalLitres += data.litersRejected || 0;
-          }
+          totalLitres += (Number(doc.data().litersRejected) || 0);
         });
         setRejectStats({ totalLitres, count: snapshot.size });
       }, (error) => handleFirestoreError(error, OperationType.LIST, 'rejects'));
@@ -363,6 +403,7 @@ export default function Dashboard() {
 
     return () => {
       unsubscribeSellers();
+      unsubscribeAllTankers();
       unsubscribeTankers();
       unsubscribeRegister();
       unsubscribeMoney();
@@ -370,7 +411,7 @@ export default function Dashboard() {
       unsubscribeCans();
       unsubscribeRejects();
     };
-  }, [profile, selectedMccId, mccs, isGlobalViewer]);
+  }, [profile, selectedMccId, mccs, isGlobalViewer, startDate, endDate]);
 
   const chartData = useMemo(() => {
     if (allEntries.length === 0) return [];
@@ -378,14 +419,29 @@ export default function Dashboard() {
     const now = new Date();
     let data: any[] = [];
 
-    const getMccDataForEntries = (entries: any[]) => {
+    // Pre-process entries into a map for faster lookup: [date][mccId]
+    const entriesByDateAndMcc = new Map<string, Map<string, number>>();
+    allEntries.forEach(e => {
+      if (!entriesByDateAndMcc.has(e.date)) {
+        entriesByDateAndMcc.set(e.date, new Map());
+      }
+      const mccMap = entriesByDateAndMcc.get(e.date)!;
+      const mccKey = e.mccId;
+      mccMap.set(mccKey, (mccMap.get(mccKey) || 0) + (Number(e.quantity) || 0));
+    });
+
+    const getMccDataForDate = (dateStr: string) => {
       const mccData: any = {};
+      const mccMap = entriesByDateAndMcc.get(dateStr);
+      let total = 0;
+      
       mccs.forEach(mcc => {
-        mccData[mcc.name] = entries
-          .filter(e => e.mccId === mcc.id || e.mccId === mcc.name)
-          .reduce((sum, e) => sum + (Number(e.quantity) || 0), 0);
+        // Check for both ID and Name to be safe (historical reasons)
+        const val = (mccMap?.get(mcc.id) || 0) + (mccMap?.get(mcc.name) || 0);
+        mccData[mcc.name] = val;
+        total += val;
       });
-      return mccData;
+      return { mccData, total };
     };
 
     if (timeframe === 'daily' || timeframe === 'custom') {
@@ -402,49 +458,83 @@ export default function Dashboard() {
         end: startOfDay(end)
       });
 
-      // Limit to 31 days to avoid chart clutter
       const chartDays = days.slice(-31);
 
       data = chartDays.map(day => {
         const dayStr = format(day, 'yyyy-MM-dd');
-        const dayEntries = allEntries.filter(e => e.date === dayStr);
+        const { mccData, total } = getMccDataForDate(dayStr);
         
         return {
           name: timeframe === 'custom' && days.length > 10 ? format(day, 'dd/MM') : format(day, 'EEE'),
-          ...getMccDataForEntries(dayEntries),
-          total: dayEntries.reduce((sum, e) => sum + (Number(e.quantity) || 0), 0),
+          ...mccData,
+          total,
           fullDate: format(day, 'dd/MM/yyyy')
         };
       });
     } else if (timeframe === 'weekly') {
+      // Weekly grouping
       for (let i = 3; i >= 0; i--) {
         const weekStart = startOfWeek(subDays(now, i * 7));
-        const weekEntries = allEntries.filter(e => isSameWeek(new Date(e.date), weekStart));
+        const weekEnd = startOfDay(new Date(weekStart.getTime() + 6 * 24 * 60 * 60 * 1000));
         
+        let weekTotal = 0;
+        const weekMccData: any = {};
+        mccs.forEach(mcc => weekMccData[mcc.name] = 0);
+
+        // Iterate through entries in this week
+        allEntries.forEach(e => {
+          const eDate = new Date(e.date);
+          if (eDate >= weekStart && eDate <= weekEnd) {
+            const qty = Number(e.quantity) || 0;
+            weekTotal += qty;
+            const mcc = mccs.find(m => m.id === e.mccId || m.name === e.mccId);
+            if (mcc) {
+              weekMccData[mcc.name] += qty;
+            }
+          }
+        });
+
         data.push({
           name: `Wk ${4-i}`,
-          ...getMccDataForEntries(weekEntries),
-          total: weekEntries.reduce((sum, e) => sum + (Number(e.quantity) || 0), 0),
-          fullDate: `Week of ${format(weekStart, 'MMM dd')}`
+          ...weekMccData,
+          total: weekTotal,
+          fullDate: `Week of ${format(weekStart, 'dd/MM/yyyy')}`
         });
       }
     } else if (timeframe === 'monthly' || timeframe === 'all') {
-      const monthsToShow = timeframe === 'all' ? 12 : 6;
+      const monthsToShow = timeframe === 'all' ? 24 : 6; // Show up to 2 years for all-time
       for (let i = monthsToShow - 1; i >= 0; i--) {
-        const monthStart = startOfMonth(subDays(now, i * 30));
-        const monthEntries = allEntries.filter(e => isSameMonth(new Date(e.date), monthStart));
+        const monthStart = startOfMonth(subMonths(now, i));
         
-        data.push({
-          name: format(monthStart, 'MMM'),
-          ...getMccDataForEntries(monthEntries),
-          total: monthEntries.reduce((sum, e) => sum + (Number(e.quantity) || 0), 0),
-          fullDate: format(monthStart, 'MMMM yyyy')
+        let monthTotal = 0;
+        const monthMccData: any = {};
+        mccs.forEach(mcc => monthMccData[mcc.name] = 0);
+
+        allEntries.forEach(e => {
+          if (isSameMonth(new Date(e.date), monthStart)) {
+            const qty = Number(e.quantity) || 0;
+            monthTotal += qty;
+            const mcc = mccs.find(m => m.id === e.mccId || m.name === e.mccId);
+            if (mcc) {
+              monthMccData[mcc.name] += qty;
+            }
+          }
         });
+        
+        // Only push if there's data or within the last 6 months to keep chart meaningful
+        if (monthTotal > 0 || i < 6) {
+          data.push({
+            name: format(monthStart, 'MMM'),
+            ...monthMccData,
+            total: monthTotal,
+            fullDate: format(monthStart, 'MMMM yyyy')
+          });
+        }
       }
     }
 
     return data;
-  }, [allEntries, timeframe, mccs]);
+  }, [allEntries, timeframe, mccs, startDate, endDate]);
 
 
   const checkWidgetPerm = (name: string) => {
@@ -465,7 +555,17 @@ export default function Dashboard() {
   };
 
   const statCards = [
-    { name: timeframe === 'all' ? 'Total Litres (Lifetime)' : timeframe === 'custom' ? 'Litres (Custom Range)' : `Litres (${timeframe})`, value: `${formatNumber(filteredStatsByTimeframe.litres, 1)} L`, icon: Milk, color: 'text-green-600', bg: 'bg-green-50', hide: !checkWidgetPerm('Total Litres') },
+    { name: timeframe === 'all' ? 'Total Litres (Lifetime)' : timeframe === 'custom' ? 'Litres (Custom Range)' : `Litres (${timeframe})`, value: `${formatNumber(filteredStatsByTimeframe.litres, 2)} L`, icon: Milk, color: 'text-green-600', bg: 'bg-green-50', hide: !checkWidgetPerm('Total Litres') },
+    { name: timeframe === 'all' ? 'Total Sent (Lifetime)' : timeframe === 'custom' ? 'Sent (Custom Range)' : `Sent (${timeframe})`, value: `${formatNumber(stats.totalSent, 2)} L`, icon: Truck, color: 'text-primary', bg: 'bg-primary/5', hide: !checkWidgetPerm('Total Sent') },
+    { name: timeframe === 'all' ? 'Total Received (Lifetime)' : timeframe === 'custom' ? 'Received (Custom Range)' : `Received (${timeframe})`, value: `${formatNumber(stats.totalReceived, 2)} L`, icon: CheckCircle2, color: 'text-green-600', bg: 'bg-green-50', hide: !checkWidgetPerm('Total Received') },
+    { 
+      name: 'Dispatch Difference', 
+      value: `${(stats.totalReceived - stats.totalSent) > 0 ? '+' : ''}${formatNumber(stats.totalReceived - stats.totalSent, 2)} L`, 
+      icon: TrendingUp, 
+      color: (stats.totalReceived - stats.totalSent) >= 0 ? 'text-green-600' : 'text-red-600', 
+      bg: (stats.totalReceived - stats.totalSent) >= 0 ? 'bg-green-50' : 'bg-red-50',
+      hide: !checkWidgetPerm('Dispatch Difference')
+    },
     { name: timeframe === 'all' ? 'Total Paid (Lifetime)' : timeframe === 'custom' ? 'Paid (Custom Range)' : `Paid (${timeframe})`, value: `TSh ${formatNumber(filteredStatsByTimeframe.paid, 0)}`, icon: TrendingUp, color: 'text-green-600', bg: 'bg-green-50', hide: !checkWidgetPerm('Total Paid') },
     { name: timeframe === 'all' ? 'Total Unpaid (Lifetime)' : timeframe === 'custom' ? 'Unpaid (Custom Range)' : `Unpaid (${timeframe})`, value: `TSh ${formatNumber(filteredStatsByTimeframe.unpaid, 0)}`, icon: AlertCircle, color: filteredStatsByTimeframe.unpaid > 0 ? 'text-amber-600' : 'text-on-surface-variant', bg: 'bg-amber-50', hide: !checkWidgetPerm('Total Unpaid') },
     { name: 'Station Expenses', value: `TSh ${formatNumber(stats.totalExpenses, 0)}`, icon: Receipt, color: 'text-red-600', bg: 'bg-red-50', hide: !checkWidgetPerm('Station Expenses') },
@@ -478,7 +578,7 @@ export default function Dashboard() {
       hide: !checkWidgetPerm('Net Balance')
     },
     { name: 'Cans Issued', value: (milkCanStats.issued - milkCanStats.returned).toString(), icon: Milk, color: 'text-orange-600', bg: 'bg-orange-50', hide: !checkWidgetPerm('Cans Issued') },
-    { name: "Total Rejects", value: `${formatNumber(rejectStats.totalLitres, 1)} L`, icon: AlertCircle, color: 'text-red-600', bg: 'bg-red-50', hide: !checkWidgetPerm('Today\'s Rejects') },
+    { name: "Total Rejects", value: `${formatNumber(rejectStats.totalLitres, 2)} L`, icon: AlertCircle, color: 'text-red-600', bg: 'bg-red-50', hide: !checkWidgetPerm('Today\'s Rejects') },
     { name: 'Active Sellers', value: stats.uniqueSellers, icon: Users, color: 'text-purple-600', bg: 'bg-purple-50', hide: !checkWidgetPerm('Active Sellers') },
   ];
 
@@ -512,18 +612,21 @@ export default function Dashboard() {
                 <button
                   key={t}
                   onClick={() => {
-                    setTimeframe(t);
-                    if (t === 'daily') {
-                       setStartDate(getTanzaniaTodayStr());
-                       setEndDate(getTanzaniaTodayStr());
-                    } else if (t === 'weekly') {
-                       setStartDate(format(startOfWeek(getTanzaniaDate()), 'yyyy-MM-dd'));
-                       setEndDate(getTanzaniaTodayStr());
-                    } else if (t === 'monthly') {
-                       setStartDate(format(startOfMonth(getTanzaniaDate()), 'yyyy-MM-dd'));
-                       setEndDate(getTanzaniaTodayStr());
-                    }
-                  }}
+                  setTimeframe(t);
+                  if (t === 'all') {
+                    setStartDate('2026-01-01'); // Safe project start date
+                    setEndDate(getTanzaniaTodayStr());
+                  } else if (t === 'daily') {
+                     setStartDate(getTanzaniaTodayStr());
+                     setEndDate(getTanzaniaTodayStr());
+                  } else if (t === 'weekly') {
+                     setStartDate(format(startOfWeek(getTanzaniaDate()), 'yyyy-MM-dd'));
+                     setEndDate(getTanzaniaTodayStr());
+                  } else if (t === 'monthly') {
+                     setStartDate(format(startOfMonth(getTanzaniaDate()), 'yyyy-MM-dd'));
+                     setEndDate(getTanzaniaTodayStr());
+                  }
+                }}
                   className={cn(
                     "px-4 py-1.5 text-[10px] font-bold rounded-md transition-all capitalize",
                     timeframe === t ? "bg-white text-primary shadow-sm" : "text-on-surface-variant hover:text-on-surface"
@@ -535,30 +638,22 @@ export default function Dashboard() {
             </div>
 
             <div className="flex items-center gap-2 bg-surface-container-low p-1 rounded-lg border border-outline-variant/30">
-              <div className="flex items-center gap-1 px-2 border-r border-outline-variant/30">
-                <Calendar size={12} className="text-primary" />
-                <span className="text-[10px] font-bold uppercase opacity-60">From</span>
-              </div>
-              <input 
-                type="date" 
+              <DateInput 
                 value={startDate} 
-                onChange={e => {
-                  setStartDate(e.target.value);
+                onChange={val => {
+                  setStartDate(val);
                   setTimeframe('custom');
                 }}
-                className="bg-transparent border-none text-[10px] font-bold p-1 outline-none"
+                label="From"
               />
-              <div className="flex items-center gap-1 px-2 border-l border-r border-outline-variant/30">
-                <span className="text-[10px] font-bold uppercase opacity-60">To</span>
-              </div>
-              <input 
-                type="date" 
+              <div className="w-px h-8 bg-outline-variant/30 self-end mb-1"></div>
+              <DateInput 
                 value={endDate} 
-                onChange={e => {
-                  setEndDate(e.target.value);
+                onChange={val => {
+                  setEndDate(val);
                   setTimeframe('custom');
                 }}
-                className="bg-transparent border-none text-[10px] font-bold p-1 outline-none"
+                label="To"
               />
             </div>
           </div>
@@ -588,7 +683,7 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="flex flex-col">
             <span className="text-xs font-medium text-on-surface-variant uppercase tracking-wider">Total Liters</span>
-            <span className="text-3xl font-extrabold text-primary">{formatNumber(filteredStatsByTimeframe.litres, 1)} L</span>
+            <span className="text-3xl font-extrabold text-primary">{formatNumber(filteredStatsByTimeframe.litres, 2)} L</span>
           </div>
           <div className="flex flex-col">
             <span className="text-xs font-medium text-on-surface-variant uppercase tracking-wider">Total Paid</span>
@@ -670,7 +765,7 @@ export default function Dashboard() {
                     fontSize: '12px',
                     padding: '8px 12px'
                   }}
-                  formatter={(value: any, name: string) => [`${formatNumber(value, 1)} Liters`, name]}
+                  formatter={(value: any, name: string) => [`${formatNumber(value, 2)} Liters`, name]}
                   labelFormatter={(label, payload) => {
                     const data = payload[0]?.payload;
                     return data?.fullDate || label;

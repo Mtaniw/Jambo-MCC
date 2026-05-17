@@ -1,17 +1,42 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, deleteDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../hooks/useAuth';
-import { Plus, Trash2, Edit2, X, ArrowDownCircle, ArrowUpCircle, Wallet, Receipt, Milk, Calculator } from 'lucide-react';
+import { 
+  Plus, 
+  Trash2, 
+  Edit2, 
+  X, 
+  ArrowDownCircle, 
+  ArrowUpCircle, 
+  Wallet, 
+  Receipt, 
+  Milk, 
+  Calculator,
+  Printer,
+  Download,
+  FileText,
+  Share2,
+  Calendar,
+  Filter,
+  Loader2
+} from 'lucide-react';
 import { cn, formatNumber } from '../lib/utils';
 import { format, startOfMonth } from 'date-fns';
 import { getTanzaniaTodayStr, safeFormat } from '../lib/dateUtils';
+import { DateInput } from '../components/DateInput';
 import { handleFirestoreError, OperationType } from '../lib/errorHandlers';
 import { ImportModal } from '../components/ImportModal';
 import { Upload } from 'lucide-react';
+import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
+import { useSettings } from '../hooks/useSettings';
 
 export default function Funds() {
   const { profile, effectiveRole } = useAuth();
+  const { settings } = useSettings();
+  const reportRef = useRef<HTMLDivElement>(null);
   const [funds, setFunds] = useState<any[]>([]);
   const [expenses, setExpenses] = useState<any[]>([]);
   const [milkPurchases, setMilkPurchases] = useState<any[]>([]);
@@ -22,7 +47,7 @@ export default function Funds() {
   const [showImportModal, setShowImportModal] = useState(false);
   const [selectedMccId, setSelectedMccId] = useState<string>('all');
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
-  const [startDate, setStartDate] = useState<string>(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
+  const [startDate, setStartDate] = useState<string>('2024-01-01');
   const [endDate, setEndDate] = useState<string>(getTanzaniaTodayStr());
 
   const isGlobalViewer = profile && ['Super User', 'Admin', 'Factory Clerk', 'Supervisor', 'Manager', 'Director'].includes(effectiveRole as string);
@@ -134,6 +159,56 @@ export default function Funds() {
     setFormData({ ...formData, sender: '', purpose: '', refNo: '', amountReceived: '', amountUsed: '0', notes: '' });
   };
 
+  const exportToExcel = () => {
+    const data = funds.map(f => ({
+      Date: f.date,
+      MCC: mccs.find(m => m.id === f.mccId)?.name || 'Unknown',
+      Sender: f.sender,
+      'Ref No': f.refNo || '-',
+      Amount: f.amountReceived,
+      'Recorded By': f.recordedBy
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Funds Received");
+    XLSX.writeFile(wb, `Funds_Received_${startDate}_to_${endDate}.xlsx`);
+  };
+
+  const exportToPDF = async () => {
+    if (!reportRef.current) return;
+    setLoading(true);
+    const canvas = await html2canvas(reportRef.current, {
+      scale: 2,
+      useCORS: true,
+      logging: false
+    });
+    const imgData = canvas.toDataURL('image/png');
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const imgProps = pdf.getImageProperties(imgData);
+    const pdfWidth = pdf.internal.pageSize.getWidth();
+    const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+    pdf.save(`Funds_Received_${startDate}_to_${endDate}.pdf`);
+    setLoading(false);
+  };
+
+  const shareReport = async () => {
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: `Funds Received Report - ${settings.systemName || 'MCC System'}`,
+          text: `Financial reconciliation from ${startDate} to ${endDate}. Net Balance: TSh ${formatNumber(reconciliation.netBalance, 0)}`,
+          url: window.location.href
+        });
+      } else {
+        alert('Sharing is not supported on this device/browser');
+      }
+    } catch (error) {
+      console.error('Error sharing:', error);
+    }
+  };
+
   const handleImport = async (data: any[]) => {
     const now = new Date().toISOString();
     for (const row of data) {
@@ -162,13 +237,13 @@ export default function Funds() {
   if (loading) return <div className="flex justify-center p-10"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div></div>;
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
+    <div className="space-y-6 pb-20">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 print:hidden">
         <div>
           <h1 className="text-2xl font-bold text-on-surface">Financial Reconciliation</h1>
           <p className="text-on-surface-variant text-sm">Full system financial tracking and funds management</p>
         </div>
-        <div className="flex gap-4">
+        <div className="flex flex-wrap items-center gap-2">
           {isGlobalViewer && (
             <select 
               value={selectedMccId} 
@@ -179,6 +254,38 @@ export default function Funds() {
               {mccs.map(mcc => <option key={mcc.id} value={mcc.id}>{mcc.name}</option>)}
             </select>
           )}
+          
+          <div className="flex items-center gap-2 mr-2">
+            <button 
+              onClick={() => window.print()}
+              className="p-2 bg-white border border-outline-variant/20 rounded-lg hover:bg-surface-container transition-colors shadow-sm"
+              title="Print Report"
+            >
+              <Printer size={18} />
+            </button>
+            <button 
+              onClick={exportToExcel}
+              className="p-2 bg-white border border-outline-variant/20 rounded-lg hover:bg-surface-container transition-colors shadow-sm"
+              title="Export to Excel"
+            >
+              <Download size={18} />
+            </button>
+            <button 
+              onClick={exportToPDF}
+              className="p-2 bg-white border border-outline-variant/20 rounded-lg hover:bg-surface-container transition-colors shadow-sm"
+              title="Export to PDF"
+            >
+              <FileText size={18} />
+            </button>
+            <button 
+              onClick={shareReport}
+              className="p-2 bg-white border border-outline-variant/20 rounded-lg hover:bg-surface-container transition-colors shadow-sm"
+              title="Share Report"
+            >
+              <Share2 size={18} />
+            </button>
+          </div>
+
           {canWrite && (
             <button onClick={() => setShowImportModal(true)} className="bg-surface-container-high text-on-surface px-4 py-2 rounded-lg font-bold flex items-center gap-2 shadow-sm hover:bg-surface-container-highest transition-all">
               <Upload size={18} /> Import
@@ -192,7 +299,15 @@ export default function Funds() {
         </div>
       </div>
 
-      {/* Reconciliation Summary */}
+      <div ref={reportRef} className="space-y-6 print:p-0">
+        <div className="hidden print:block mb-8 border-b pb-4">
+          <h1 className="text-3xl font-black">{settings.companyName || 'Jambo Food Products Ltd'}</h1>
+          <p className="text-lg font-bold text-primary">{settings.systemName || 'Financial Reconciliation'} - Summary</p>
+          <p className="text-sm">Period: {startDate} to {endDate}</p>
+          {selectedMccId !== 'all' && <p className="text-sm">MCC Station: {mccs.find(m => m.id === selectedMccId)?.name}</p>}
+        </div>
+
+        {/* Reconciliation Summary */}
       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
         <div className="bg-white p-6 rounded-xl border border-outline-variant/20 shadow-sm transition-all hover:shadow-md">
           <div className="flex items-center gap-3 mb-4">
@@ -237,22 +352,18 @@ export default function Funds() {
 
       <div className="bg-white p-4 rounded-xl border border-outline-variant/20 shadow-sm flex flex-wrap gap-4 items-end">
         <div className="w-44 space-y-1">
-          <label className="text-[10px] font-bold uppercase opacity-60">From</label>
-          <input 
-            type="date" 
+          <DateInput 
             value={startDate} 
-            onChange={e => setStartDate(e.target.value)}
-            className="w-full h-10 px-3 bg-surface-container-low border-none rounded-lg text-sm font-bold transition-colors focus:bg-surface-container-high"
+            onChange={setStartDate}
+            label="From"
           />
         </div>
 
         <div className="w-44 space-y-1">
-          <label className="text-[10px] font-bold uppercase opacity-60">To</label>
-          <input 
-            type="date" 
+          <DateInput 
             value={endDate} 
-            onChange={e => setEndDate(e.target.value)}
-            className="w-full h-10 px-3 bg-surface-container-low border-none rounded-lg text-sm font-bold transition-colors focus:bg-surface-container-high"
+            onChange={setEndDate}
+            label="To"
           />
         </div>
 
@@ -306,8 +417,11 @@ export default function Funds() {
             <input placeholder="Ref No." value={formData.refNo} onChange={e => setFormData({...formData, refNo: e.target.value})} className="w-full bg-surface-container-low border-none rounded-lg p-2 text-sm" />
           </div>
           <div className="space-y-1">
-            <label className="text-xs font-bold uppercase tracking-wider">Date</label>
-            <input type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} className="w-full bg-surface-container-low border-none rounded-lg p-2 text-sm" required />
+            <DateInput 
+              value={formData.date} 
+              onChange={val => setFormData({...formData, date: val})}
+              label="Date"
+            />
           </div>
           <div className="space-y-1">
             <label className="text-xs font-bold uppercase tracking-wider">Mode</label>
@@ -331,8 +445,9 @@ export default function Funds() {
       )}
 
       <div className="bg-white rounded-xl border border-outline-variant/20 shadow-sm overflow-hidden">
-        <div className="px-6 py-4 border-b border-outline-variant/20">
+        <div className="px-6 py-4 border-b border-outline-variant/20 flex justify-between items-center">
           <h3 className="font-bold text-on-surface">Funds History</h3>
+          <p className="text-xs font-bold text-on-surface-variant print:block hidden">Total Records: {funds.length}</p>
         </div>
         <table className="w-full text-left">
           <thead className="bg-surface-container-low text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">
@@ -340,10 +455,9 @@ export default function Funds() {
               <th className="px-6 py-3">Date</th>
               <th className="px-6 py-3">MCC</th>
               <th className="px-6 py-3">Sender</th>
-              <th className="px-6 py-3">Use</th>
               <th className="px-6 py-3">Receipt / Ref</th>
               <th className="px-6 py-3">Amount</th>
-              {canWrite && <th className="px-6 py-3 text-right">Actions</th>}
+              {canWrite && <th className="px-6 py-3 text-right print:hidden">Actions</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-outline-variant/10">
@@ -357,13 +471,13 @@ export default function Funds() {
                 return sortOrder === 'desc' ? -comparison : comparison;
               }).map(fund => (
               <tr key={fund.id} className="hover:bg-surface-container-lowest transition-colors">
-                <td className="px-6 py-4 text-sm">{safeFormat(fund.date, 'dd/MM/yyyy')}</td>
+                <td className="px-6 py-4 text-sm font-bold">{safeFormat(fund.date, 'dd/MM/yyyy')}</td>
                 <td className="px-6 py-4 text-sm">{mccs.find(m => m.id === fund.mccId)?.name || 'Unknown'}</td>
                 <td className="px-6 py-4 text-sm font-medium">{fund.sender}</td>
                 <td className="px-6 py-4 text-sm text-on-surface-variant">{fund.refNo || '-'}</td>
-                <td className="px-6 py-4 text-sm font-bold text-green-600">TSh {formatNumber(fund.amountReceived, 0)}</td>
+                <td className="px-6 py-4 text-sm font-black text-green-600">TSh {formatNumber(fund.amountReceived, 0)}</td>
                 {canWrite && (
-                  <td className="px-6 py-4 text-right">
+                  <td className="px-6 py-4 text-right print:hidden">
                     <div className="flex justify-end gap-2">
                       <button 
                         onClick={() => {
@@ -393,8 +507,14 @@ export default function Funds() {
                 )}
               </tr>
             ))}
+            {funds.length === 0 && (
+              <tr>
+                <td colSpan={canWrite ? 6 : 5} className="px-6 py-10 text-center text-on-surface-variant italic">No financial records found for this period.</td>
+              </tr>
+            )}
           </tbody>
         </table>
+      </div>
       </div>
 
       <ImportModal
@@ -408,6 +528,15 @@ export default function Funds() {
         ]}
         expectedColumns={['Date', 'MCC', 'Amount']}
       />
+
+      {loading && (
+        <div className="fixed inset-0 bg-white/60 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-4">
+            <Loader2 className="animate-spin text-primary" size={48} />
+            <p className="font-black text-primary animate-pulse tracking-widest text-xs">PROCESSING REPORT...</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

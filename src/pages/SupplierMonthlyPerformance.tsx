@@ -15,31 +15,38 @@ import {
   parseISO,
   isWithinInterval
 } from 'date-fns';
-import { getTanzaniaDate, safeFormat } from '../lib/dateUtils';
+import { getTanzaniaDate, safeFormat, getSystemStartMonth, getSystemStartDate } from '../lib/dateUtils';
+import { DateInput } from '../components/DateInput';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
 export default function SupplierMonthlyPerformance() {
-  const { profile } = useAuth();
+  const { profile, effectiveRole } = useAuth();
   const [entries, setEntries] = useState<any[]>([]);
   const [sellers, setSellers] = useState<any[]>([]);
   const [mccs, setMccs] = useState<any[]>([]);
   const [rejects, setRejects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedMccId, setSelectedMccId] = useState<string>('all');
+  
+  // Date selection states
+  const [viewType, setViewType] = useState<'monthly' | 'custom'>('monthly');
   const [selectedMonth, setSelectedMonth] = useState(format(getTanzaniaDate(), 'yyyy-MM'));
+  const [startDate, setStartDate] = useState(format(startOfMonth(getTanzaniaDate()), 'yyyy-MM-dd'));
+  const [endDate, setEndDate] = useState(format(getTanzaniaDate(), 'yyyy-MM-dd'));
+
   const [searchTerm, setSearchTerm] = useState('');
   const [sortOrder, setSortOrder] = useState<'high' | 'low' | 'none'>('none');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 15;
 
-  const allowedRoles = ['Manager', 'Supervisor', 'Director', 'Admin', 'Super User'];
-  const hasAccess = profile && allowedRoles.includes(profile.role);
+  const allowedRoles = ['Manager', 'Supervisor', 'Director', 'Admin', 'Super User', 'Cashier', 'Quality Controller'];
+  const hasAccess = profile && allowedRoles.includes(effectiveRole as string);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedMonth, selectedMccId, searchTerm]);
+  }, [selectedMonth, startDate, endDate, viewType, selectedMccId, searchTerm]);
 
   useEffect(() => {
     if (!profile || !hasAccess) return;
@@ -56,7 +63,7 @@ export default function SupplierMonthlyPerformance() {
       });
       // Filter sellers by MCC access and active status
       const filteredSellers = sellersData.filter((s: any) => {
-        const matchesMcc = profile.role === 'Super User' || profile.role === 'Admin' || (profile.mccIds && s.mccIds && s.mccIds.some((id: string) => profile.mccIds.includes(id)));
+        const matchesMcc = effectiveRole === 'Super User' || effectiveRole === 'Admin' || (profile.mccIds && s.mccIds && s.mccIds.some((id: string) => profile.mccIds.includes(id)));
         return matchesMcc && s.active !== false;
       });
       setSellers(filteredSellers);
@@ -69,7 +76,7 @@ export default function SupplierMonthlyPerformance() {
     let q = query(collection(db, 'daily_register'));
     
     // Filter by MCCs the user has access to
-    if (profile.role !== 'Super User' && profile.role !== 'Admin') {
+    if (effectiveRole !== 'Super User' && effectiveRole !== 'Admin') {
       if (profile.mccIds && profile.mccIds.length > 0) {
         q = query(q, where('mccId', 'in', profile.mccIds));
       } else {
@@ -91,14 +98,47 @@ export default function SupplierMonthlyPerformance() {
     };
   }, [profile, hasAccess]);
 
+  // Compute dynamic date range based on configuration
+  const dateRange = useMemo(() => {
+    if (viewType === 'monthly') {
+      const baseDate = parseISO(`${selectedMonth}-01`);
+      return {
+        start: startOfMonth(baseDate),
+        end: endOfMonth(baseDate),
+        label: format(baseDate, 'MMMM yyyy'),
+        fileName: selectedMonth
+      };
+    } else {
+      let start = parseISO(startDate);
+      let end = parseISO(endDate);
+      const systemMin = parseISO(getSystemStartDate());
+      if (isNaN(start.getTime()) || start < systemMin) {
+        start = systemMin;
+      }
+      if (isNaN(end.getTime())) {
+        end = getTanzaniaDate();
+      }
+      if (start > end) {
+        const temp = start;
+        start = end;
+        end = temp;
+      }
+      return {
+        start,
+        end,
+        label: `${format(start, 'dd MMM yyyy')} - ${format(end, 'dd MMM yyyy')}`,
+        fileName: `${format(start, 'yyyy-MM-dd')}_to_${format(end, 'yyyy-MM-dd')}`
+      };
+    }
+  }, [viewType, selectedMonth, startDate, endDate]);
+
   const reportData = useMemo(() => {
-    const baseDate = parseISO(`${selectedMonth}-01`);
-    const monthStart = startOfMonth(baseDate);
-    const monthEnd = endOfMonth(baseDate);
-    // Ensure we start from the beginning of the week containing the month start
+    const { start: intervalStart, end: intervalEnd, label: rangeLabel } = dateRange;
+
+    // Ensure we start from the beginning of the week containing the start date
     const weeks = eachWeekOfInterval({ 
-      start: startOfWeek(monthStart, { weekStartsOn: 0 }), 
-      end: monthEnd 
+      start: startOfWeek(intervalStart, { weekStartsOn: 0 }), 
+      end: intervalEnd 
     }, { weekStartsOn: 0 });
 
     const mccFilteredEntries = selectedMccId === 'all' 
@@ -107,13 +147,13 @@ export default function SupplierMonthlyPerformance() {
 
     const monthEntries = mccFilteredEntries.filter(e => {
       const d = parseISO(e.date);
-      return isWithinInterval(d, { start: monthStart, end: monthEnd });
+      return isWithinInterval(d, { start: intervalStart, end: intervalEnd });
     });
 
     const monthRejects = rejects.filter(r => {
       const d = parseISO(r.date);
       const matchesMcc = selectedMccId === 'all' || r.mccId === selectedMccId;
-      return matchesMcc && isWithinInterval(d, { start: monthStart, end: monthEnd });
+      return matchesMcc && isWithinInterval(d, { start: intervalStart, end: intervalEnd });
     });
 
     // Group by seller
@@ -217,8 +257,8 @@ export default function SupplierMonthlyPerformance() {
       netPaid: 0 
     });
 
-    return { rows, totals, weeks, monthLabel: format(baseDate, 'MMMM yyyy') };
-  }, [entries, sellers, selectedMonth, selectedMccId, searchTerm]);
+    return { rows, totals, weeks, monthLabel: rangeLabel };
+  }, [entries, sellers, dateRange, selectedMccId, searchTerm, sortOrder, rejects]);
 
   const exportToExcel = () => {
     const data = reportData.rows.map(r => {
@@ -227,7 +267,10 @@ export default function SupplierMonthlyPerformance() {
         'Seller Name': r.name
       };
       r.weeks.forEach((w: number, i: number) => {
-        row[`Week ${i + 1} (L)`] = w;
+        const wStart = reportData.weeks[i];
+        const wEnd = endOfWeek(wStart, { weekStartsOn: 0 });
+        const dateRangeStr = `${format(wStart, 'dd/MM')}-${format(wEnd, 'dd/MM')}`;
+        row[`Week ${i + 1} (${dateRangeStr}) (L)`] = w;
       });
       row['Total (L)'] = r.total;
       row['Rejected (L)'] = r.rejected;
@@ -238,7 +281,7 @@ export default function SupplierMonthlyPerformance() {
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Performance');
-    XLSX.writeFile(wb, `Supplier_Performance_${selectedMonth}.xlsx`);
+    XLSX.writeFile(wb, `Supplier_Performance_${dateRange.fileName}.xlsx`);
   };
 
   const exportToPDF = () => {
@@ -246,20 +289,23 @@ export default function SupplierMonthlyPerformance() {
     doc.setFontSize(18);
     doc.text("Jambo Food Products Ltd", 14, 15);
     doc.setFontSize(14);
-    doc.text(`Monthly Performance By Supplier - ${reportData.monthLabel}`, 14, 22);
+    doc.text(`Supplier Performance Report - ${reportData.monthLabel}`, 14, 22);
     doc.setFontSize(10);
     doc.text(`Generated: ${format(new Date(), 'dd/MM/yyyy p')}`, 14, 28);
     
     const tableData = reportData.rows.map(r => [
       r.no, 
       r.name, 
-      ...r.weeks.map((w: number) => formatNumber(w, 2)),
-      formatNumber(r.total, 2),
-      formatNumber(r.rejected, 2),
-      formatNumber(r.netPaid, 0)
+      ...r.weeks.map((w: number) => formatNumber(w, 2, false, true)),
+      formatNumber(r.total, 2, false, true),
+      formatNumber(r.rejected, 2, false, true),
+      formatNumber(r.netPaid, 2, true, true)
     ]);
 
-    const weekHeaders = reportData.weeks.map((_, i) => `Wk ${i + 1}`);
+    const weekHeaders = reportData.weeks.map((wStart, i) => {
+      const wEnd = endOfWeek(wStart, { weekStartsOn: 0 });
+      return `Wk ${i + 1} (${format(wStart, 'd/M')}-${format(wEnd, 'd/M')})`;
+    });
 
     (doc as any).autoTable({
       startY: 35,
@@ -269,7 +315,7 @@ export default function SupplierMonthlyPerformance() {
       headStyles: { fillColor: [0, 102, 204] }
     });
 
-    doc.save(`Supplier_Performance_${selectedMonth}.pdf`);
+    doc.save(`Supplier_Performance_${dateRange.fileName}.pdf`);
   };
 
   const handleShare = async () => {
@@ -277,7 +323,7 @@ export default function SupplierMonthlyPerformance() {
       try {
         const doc = new jsPDF('l');
         doc.text("Jambo Food Products Ltd", 14, 15);
-        doc.text(`Monthly Performance Report - ${selectedMonth}`, 14, 22);
+        doc.text(`Supplier Performance Report - ${reportData.monthLabel}`, 14, 22);
         const tableData = reportData.rows.map(r => [
           r.no,
           r.name,
@@ -291,11 +337,11 @@ export default function SupplierMonthlyPerformance() {
           body: tableData,
         });
         const pdfBlob = doc.output('blob');
-        const file = new File([pdfBlob], `Supplier_Performance_${selectedMonth}.pdf`, { type: 'application/pdf' });
+        const file = new File([pdfBlob], `Supplier_Performance_${dateRange.fileName}.pdf`, { type: 'application/pdf' });
 
         await navigator.share({
           title: 'Supplier Performance Report',
-          text: `Monthly Performance Report for ${selectedMonth}`,
+          text: `Supplier Performance Report for ${reportData.monthLabel}`,
           files: [file]
         });
       } catch (err) {
@@ -316,7 +362,7 @@ export default function SupplierMonthlyPerformance() {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-bold">Monthly Performance (By Supplier)</h1>
+          <h1 className="text-2xl font-bold">Supplier Performance</h1>
           <p className="text-on-surface-variant">Detailed supplier collection summary</p>
         </div>
         <div className="flex gap-2">
@@ -336,24 +382,80 @@ export default function SupplierMonthlyPerformance() {
               placeholder="Search name..."
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-surface-container-low border-none rounded-lg text-sm"
+              className="w-full pl-10 pr-4 py-2 bg-surface-container-low border-none rounded-lg text-sm h-9"
             />
           </div>
         </div>
-        <div className="w-48">
-          <label className="text-xs font-bold uppercase mb-1 block">Month</label>
-          <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="w-full p-2 bg-surface-container-low rounded-lg text-sm" />
+
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-bold uppercase block mb-1">View Type</label>
+          <div className="flex bg-surface-container-low p-1 rounded-lg gap-1 h-9">
+            <button
+              onClick={() => setViewType('monthly')}
+              className={cn(
+                "px-3 text-xs font-black rounded-md transition-all",
+                viewType === 'monthly' ? "bg-white text-primary shadow-sm" : "text-on-surface-variant hover:text-on-surface"
+              )}
+            >
+              Monthly
+            </button>
+            <button
+              onClick={() => setViewType('custom')}
+              className={cn(
+                "px-3 text-xs font-black rounded-md transition-all",
+                viewType === 'custom' ? "bg-white text-primary shadow-sm" : "text-on-surface-variant hover:text-on-surface"
+              )}
+            >
+              Custom
+            </button>
+          </div>
         </div>
+
+        {viewType === 'monthly' ? (
+          <div className="w-48">
+            <label className="text-xs font-bold uppercase mb-1 block">Month</label>
+            <input 
+              type="month" 
+              min={getSystemStartMonth()}
+              value={selectedMonth} 
+              onChange={e => {
+                const minM = getSystemStartMonth();
+                if (e.target.value && e.target.value < minM) {
+                  setSelectedMonth(minM);
+                } else {
+                  setSelectedMonth(e.target.value);
+                }
+              }} 
+              className="w-full p-2 h-9 bg-surface-container-low rounded-lg text-sm font-bold border-none" 
+            />
+          </div>
+        ) : (
+          <>
+            <DateInput
+              label="Start Date"
+              value={startDate}
+              onChange={setStartDate}
+              className="w-40"
+            />
+            <DateInput
+              label="End Date"
+              value={endDate}
+              onChange={setEndDate}
+              className="w-40"
+            />
+          </>
+        )}
+
         <div className="w-48">
           <label className="text-xs font-bold uppercase mb-1 block">MCC</label>
-          <select value={selectedMccId} onChange={e => setSelectedMccId(e.target.value)} className="w-full p-2 bg-surface-container-low rounded-lg text-sm">
+          <select value={selectedMccId} onChange={e => setSelectedMccId(e.target.value)} className="w-full p-2 h-9 bg-surface-container-low rounded-lg text-sm border-none font-bold">
             <option value="all">All MCCs</option>
             {mccs.map(mcc => <option key={mcc.id} value={mcc.id}>{mcc.name}</option>)}
           </select>
         </div>
         <div className="w-48">
           <label className="text-xs font-bold uppercase mb-1 block">Sort By Total</label>
-          <select value={sortOrder} onChange={e => setSortOrder(e.target.value as any)} className="w-full p-2 bg-surface-container-low rounded-lg text-sm">
+          <select value={sortOrder} onChange={e => setSortOrder(e.target.value as any)} className="w-full p-2 h-9 bg-surface-container-low rounded-lg text-sm border-none font-bold">
             <option value="none">Default</option>
             <option value="high">High to Low</option>
             <option value="low">Low to High</option>
@@ -368,9 +470,17 @@ export default function SupplierMonthlyPerformance() {
               <tr>
                 <th className="px-6 py-4 border-b border-outline-variant/10">No.</th>
                 <th className="px-6 py-4 border-b border-outline-variant/10">Seller Name</th>
-                {reportData.weeks.map((_, i) => (
-                  <th key={i} className="px-6 py-4 border-b border-outline-variant/10 text-right">Wk {i + 1} (L)</th>
-                ))}
+                {reportData.weeks.map((wStart, i) => {
+                  const wEnd = endOfWeek(wStart, { weekStartsOn: 0 });
+                  return (
+                    <th key={i} className="px-6 py-4 border-b border-outline-variant/10 text-right">
+                      <div className="font-bold">Wk {i + 1} (L)</div>
+                      <div className="text-[9px] text-on-surface-variant/60 lowercase normal-case font-normal block mt-0.5">
+                        {format(wStart, 'd/M')} - {format(wEnd, 'd/M')}
+                      </div>
+                    </th>
+                  );
+                })}
                 <th className="px-6 py-4 border-b border-outline-variant/10 text-right">Total (L)</th>
                 <th className="px-6 py-4 border-b border-outline-variant/10 text-right">Rejected (L)</th>
                 <th className="px-6 py-4 border-b border-outline-variant/10 text-right">Net Paid (TZS)</th>
@@ -386,11 +496,11 @@ export default function SupplierMonthlyPerformance() {
                   <td className="px-6 py-4 text-on-surface-variant">{row.no}</td>
                   <td className="px-6 py-4 font-bold text-on-surface group-hover:text-primary transition-colors">{row.name}</td>
                   {row.weeks.map((w: number, i: number) => (
-                    <td key={i} className="px-6 py-4 text-right">{formatNumber(w, 2)}</td>
+                    <td key={i} className="px-6 py-4 text-right">{formatNumber(w, 2, false, true)}</td>
                   ))}
-                  <td className="px-6 py-4 text-right font-bold">{formatNumber(row.total, 2)}</td>
-                  <td className="px-6 py-4 text-right text-error">{formatNumber(row.rejected, 2)}</td>
-                  <td className="px-6 py-4 text-right font-bold text-primary">{formatNumber(row.netPaid, 0)}</td>
+                  <td className="px-6 py-4 text-right font-bold">{formatNumber(row.total, 2, false, true)}</td>
+                  <td className="px-6 py-4 text-right text-error">{formatNumber(row.rejected, 2, false, true)}</td>
+                  <td className="px-6 py-4 text-right font-bold text-primary">{formatNumber(row.netPaid, 2, true, true)}</td>
                 </tr>
               ))}
             </tbody>
@@ -398,11 +508,11 @@ export default function SupplierMonthlyPerformance() {
               <tr>
                 <td colSpan={2} className="px-6 py-5 text-right text-xs uppercase tracking-wider text-on-surface-variant">Grand Totals</td>
                 {reportData.totals.weekTotals.map((w: number, i: number) => (
-                  <td key={i} className="px-6 py-5 text-right">{formatNumber(w, 2)}</td>
+                  <td key={i} className="px-6 py-5 text-right">{formatNumber(w, 2, false, true)}</td>
                 ))}
-                <td className="px-6 py-5 text-right text-on-surface">{formatNumber(reportData.totals.total, 2)}</td>
-                <td className="px-6 py-5 text-right text-error">{formatNumber(reportData.totals.rejected, 2)}</td>
-                <td className="px-6 py-5 text-right text-primary text-base">{formatNumber(reportData.totals.netPaid, 0)}</td>
+                <td className="px-6 py-5 text-right text-on-surface">{formatNumber(reportData.totals.total, 2, false, true)}</td>
+                <td className="px-6 py-5 text-right text-error">{formatNumber(reportData.totals.rejected, 2, false, true)}</td>
+                <td className="px-6 py-5 text-right text-primary text-base">{formatNumber(reportData.totals.netPaid, 2, true, true)}</td>
               </tr>
             </tfoot>
           </table>

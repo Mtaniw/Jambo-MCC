@@ -382,7 +382,7 @@ export default function TankerWeeklyReport() {
 
                       <div className="p-3 bg-white rounded-lg border border-outline-variant/10">
                         <p className="text-[10px] font-bold uppercase text-on-surface-variant mb-1">Loaded Weight</p>
-                        <p className="font-bold">{formatNumber(row.weightKg, 2)} KG</p>
+                        <p className="font-bold">{formatNumber(row.weightKg, 2, false, true)} KG</p>
                       </div>
                       <div className="p-3 bg-white rounded-lg border border-outline-variant/10">
                         <p className="text-[10px] font-bold uppercase text-on-surface-variant mb-1">Seal Number</p>

@@ -97,7 +97,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     { name: 'Daily Register', path: '/daily-register', icon: ClipboardList, roles: ['Super User', 'Admin', 'Cashier', 'Quality Controller', 'Supervisor', 'Manager', 'Director'] },
     { name: 'Expenses', path: '/expenses', icon: Receipt, roles: ['Super User', 'Admin', 'Cashier', 'Supervisor', 'Manager', 'Director'] },
     { name: 'Funds Received', path: '/funds', icon: Wallet, roles: ['Super User', 'Admin', 'Cashier', 'Quality Controller', 'Supervisor', 'Manager', 'Director'] },
-    { name: 'Truck & QA', path: '/truck-qa', icon: Truck, roles: ['Super User', 'Admin', 'Quality Controller', 'Supervisor', 'Manager', 'Director'] },
+    { name: 'Truck & QA', path: '/truck-qa', icon: Truck, roles: ['Super User', 'Admin', 'Quality Controller', 'Supervisor', 'Cashier', 'Manager', 'Director'] },
     { name: 'Milk Cans', path: '/milk-cans', icon: Milk, roles: ['Super User', 'Admin', 'Cashier', 'Quality Controller', 'Supervisor', 'Manager', 'Director'] },
     { name: 'Rejects', path: '/rejects', icon: AlertTriangle, roles: ['Super User', 'Admin', 'Quality Controller', 'Supervisor', 'Manager', 'Director'] },
     { name: 'Reports', path: '/reports', icon: FileText, roles: ['Super User', 'Admin', 'Cashier', 'Quality Controller', 'Supervisor', 'Manager', 'Director', 'Viewer', 'Factory Clerk'] },
@@ -108,8 +108,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const filteredNavItems = navItems.filter(item => {
     if (!profile) return false;
     
-    // Admin always sees everything
-    if (profile.role === 'Admin') return true;
+    // Admin and Super User always see everything (Fail-safe for primary admin)
+    const isPrimaryAdmin = profile.email?.toLowerCase() === 'mtaniwambura@gmail.com';
+    if (effectiveRole === 'Admin' || effectiveRole === 'Super User' || isPrimaryAdmin) return true;
 
     // Check custom user permissions first
     if (profile.customPermissions?.pages) {
@@ -181,85 +182,114 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   }, [currentPage, globalSettings]);
 
   return (
-    <div className="min-h-screen bg-surface flex flex-col md:flex-row">
-      {/* Sidebar */}
+    <div className="min-h-screen bg-surface flex flex-col md:flex-row font-sans">
+      {/* Sidebar - Enhanced for Brand Identity */}
       <aside className={cn(
-        "fixed inset-y-0 left-0 z-50 w-64 bg-primary text-white transform transition-transform duration-300 ease-in-out md:sticky md:top-0 md:h-screen md:translate-x-0 overflow-hidden",
+        "fixed inset-y-0 left-0 z-50 w-72 bg-primary text-white transform transition-transform duration-300 ease-in-out md:sticky md:top-0 md:h-screen md:translate-x-0 overflow-hidden shadow-2xl print:hidden",
         isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"
       )}>
         <div className="flex flex-col h-full overflow-hidden">
-          {/* Fixed Sidebar Header */}
-          <div className="p-6 pb-4 border-b border-white/10 flex-shrink-0">
-            <div className="mb-4">
-              <Logo variant="white" className="h-12 w-auto" />
+          {/* Sidebar Header */}
+          <div className="p-5 pb-4 border-b border-white/10 flex-shrink-0">
+            <div className="mb-4 flex items-center justify-between">
+              <Logo variant="white" className="h-10 w-auto" />
+              <button 
+                onClick={() => setIsMobileMenuOpen(false)}
+                className="md:hidden p-2 hover:bg-white/10 rounded-full transition-colors"
+              >
+                <X size={20} />
+              </button>
             </div>
-            <p className="text-sm font-bold opacity-90">{globalSettings?.systemName || 'MCC Management System'}</p>
-            <p className="text-[10px] opacity-60 font-medium">{globalSettings?.companyName || 'Jambo Food Products Ltd'}</p>
+            <p className="text-[11px] font-black uppercase tracking-tighter leading-none mb-1">{globalSettings?.systemName || 'MCC Management System'}</p>
+            <p className="text-[9px] font-bold uppercase tracking-widest opacity-60 text-secondary-container">
+              {globalSettings?.companyName || 'Jambo Food Products Ltd'}
+            </p>
           </div>
 
-          {/* Scrollable Navigation */}
-          <nav className="flex-1 space-y-1 overflow-y-auto custom-scrollbar p-4 pr-2 min-h-0">
+          {/* Navigation */}
+          <nav className="flex-1 space-y-1.5 overflow-y-auto custom-scrollbar p-5 pr-3 min-h-0">
             {filteredNavItems.map((item) => (
               <Link
                 key={item.path}
                 to={item.path}
                 onClick={() => setIsMobileMenuOpen(false)}
                 className={cn(
-                  "flex items-center gap-3 px-4 py-3 rounded-lg transition-colors",
+                  "flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all duration-200 group relative",
                   location.pathname === item.path 
-                    ? "bg-white/10 text-secondary-container" 
-                    : "hover:bg-white/5 text-white/80 hover:text-white"
+                    ? "bg-white text-primary shadow-lg shadow-black/20" 
+                    : "text-white/70 hover:bg-white/10 hover:text-white"
                 )}
               >
-                <item.icon size={20} />
-                <span className="font-medium">{item.name}</span>
+                <item.icon size={20} className={cn(
+                  "shrink-0 transition-transform duration-300",
+                  location.pathname === item.path ? "scale-110" : "group-hover:scale-110"
+                )} />
+                <span className="font-black text-sm tracking-tight">{item.name}</span>
+                {location.pathname === item.path && (
+                  <div className="absolute right-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-primary rounded-l-full"></div>
+                )}
               </Link>
             ))}
           </nav>
+
+{/* Sidebar Footer - Removed as requested */}
         </div>
       </aside>
 
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* Header */}
-        <header className="bg-white border-b border-outline-variant/20 px-4 md:px-6 py-3 flex items-center justify-between sticky top-0 z-40">
-          <div className="flex items-center gap-4">
-            <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="text-on-surface md:hidden p-1 hover:bg-surface-container-low rounded-lg transition-colors">
-              {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col min-w-0 bg-surface">
+        {/* Modern Header */}
+        <header className="bg-white/80 backdrop-blur-md border-b border-outline-variant/10 px-4 md:px-6 h-12 flex items-center justify-between sticky top-0 z-40 print:hidden">
+          <div className="flex items-center gap-6">
+            <button 
+              onClick={() => setIsMobileMenuOpen(true)} 
+              className="md:hidden p-2 text-on-surface-variant hover:bg-surface-container-low rounded-xl transition-colors"
+            >
+              <Menu size={20} />
             </button>
-            <div className="hidden md:flex items-center gap-3">
-              <img 
-                src={LOGO_RED} 
-                alt="Logo" 
-                className="h-8 w-auto object-contain" 
-                referrerPolicy="no-referrer"
-              />
-              <div className="h-6 w-px bg-outline-variant/20 mx-1"></div>
-              <div className="flex items-center gap-2 text-primary">
-                {currentPage && <currentPage.icon size={20} />}
-                <h1 className="text-lg font-bold tracking-tight">{currentPage?.name || 'Jambo MCC'}</h1>
+            <div className="hidden md:flex items-center gap-4">
+              <div className="p-1 bg-surface-container-low rounded-lg border border-outline-variant/10 shadow-sm">
+                <img 
+                  src={LOGO_RED} 
+                  alt="Logo" 
+                  className="h-6 w-auto object-contain opacity-80" 
+                  referrerPolicy="no-referrer"
+                />
+              </div>
+              <div className="h-5 w-px bg-outline-variant/20 mx-1"></div>
+              <div className="flex items-center gap-2 text-on-surface">
+                {currentPage && <currentPage.icon size={16} className="text-primary" />}
+                <h1 className="text-base font-black tracking-tighter">{currentPage?.name || 'Dashboard'}</h1>
               </div>
             </div>
-            <h1 className="text-sm font-bold md:hidden truncate max-w-[120px]">{currentPage?.name}</h1>
+            <h1 className="text-sm font-black md:hidden truncate tracking-tight">{currentPage?.name}</h1>
           </div>
 
-          <div className="flex items-center gap-3 md:gap-4">
-            {/* Online Users Badge & Dropdown */}
+          <div className="flex items-center gap-3 sm:gap-4">
+            <div className="hidden sm:flex flex-col items-end">
+              <span className="text-[9px] font-black tracking-tighter text-on-surface leading-none">
+                {new Date().toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
+              </span>
+              <span className="text-[7px] font-bold uppercase tracking-[0.2em] text-primary mt-0.5 opacity-80">Jambo Network</span>
+            </div>
+
+            <div className="h-6 w-px bg-outline-variant/20 hidden lg:block"></div>
+
+            {/* Online Users */}
             <div className="relative" ref={dropdownRef}>
               <button 
                 onClick={() => setShowOnlineUsers(!showOnlineUsers)}
-                className="hidden lg:flex items-center gap-2 bg-surface-container-low px-3 py-1.5 rounded-full border border-outline-variant/10 hover:bg-surface-container-high transition-colors text-left"
+                className="hidden lg:flex items-center gap-2 bg-white px-2 py-1 rounded-lg border border-outline-variant/20 shadow-sm hover:shadow-md hover:border-primary/20 transition-all text-left group"
               >
                 <div className="relative">
-                  <Users size={16} className="text-primary" />
-                  <span className="absolute -top-1 -right-1 w-2 h-2 bg-green-500 rounded-full border border-white"></span>
+                  <div className="p-1 bg-primary/5 rounded text-primary group-hover:bg-primary group-hover:text-white transition-colors">
+                    <Users size={14} />
+                  </div>
+                  <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-green-500 rounded-full border border-white animate-pulse"></span>
                 </div>
                 <div className="flex flex-col">
-                  <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-wider leading-none">
-                    Online ({filteredOnlineUsers.length})
-                  </span>
-                  <span className="text-[8px] text-primary font-bold truncate max-w-[80px]">
-                    {filteredOnlineUsers[0]?.username || filteredOnlineUsers[0]?.fullName || 'System'}
+                  <span className="text-[8px] font-black text-on-surface uppercase tracking-widest leading-none">
+                    {filteredOnlineUsers.length} Online
                   </span>
                 </div>
               </button>
@@ -323,33 +353,33 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </div>
 
             {/* User Profile Dropdown/Section */}
-            <div className="flex items-center gap-3 pl-3 md:pl-4 border-l border-outline-variant/20">
+            <div className="flex items-center gap-2 pl-2 md:pl-4 border-l border-outline-variant/20">
               <div className="text-right hidden sm:block">
-                <p className="text-xs font-bold text-on-surface truncate max-w-[150px] leading-none">{profile?.fullName}</p>
-                <p className="text-[9px] font-bold text-primary uppercase tracking-widest leading-none mt-1">{profile?.role}</p>
+                <p className="text-[11px] font-bold text-on-surface truncate max-w-[120px] leading-none">{profile?.fullName}</p>
+                <p className="text-[8px] font-bold text-primary uppercase tracking-widest leading-none mt-0.5">{profile?.role}</p>
               </div>
-              <div className="h-10 w-10 rounded-full bg-primary text-white flex items-center justify-center text-base font-bold shadow-md ring-2 ring-surface flex-shrink-0">
+              <div className="h-8 w-8 rounded-full bg-primary text-white flex items-center justify-center text-xs font-bold shadow-md ring-2 ring-surface flex-shrink-0">
                 {profile?.fullName.charAt(0)}
               </div>
               <button
                 onClick={handleLogout}
-                className="flex items-center gap-2 px-3 py-2 text-on-surface-variant hover:text-error hover:bg-red-50 rounded-lg transition-all group"
+                className="flex items-center gap-1.5 px-2 py-1.5 text-on-surface-variant hover:text-error hover:bg-red-50 rounded-lg transition-all group"
                 title="Logout"
               >
-                <LogOut size={18} className="group-hover:scale-110 transition-transform" />
-                <span className="text-xs font-bold hidden xl:block">Logout</span>
+                <LogOut size={16} className="group-hover:scale-110 transition-transform" />
+                <span className="text-[10px] font-bold hidden xl:block">Logout</span>
               </button>
             </div>
           </div>
         </header>
 
-        <main className="flex-1 p-6 md:p-10 overflow-auto custom-scrollbar-light">
+        <main className="flex-1 p-2 md:p-3 overflow-auto custom-scrollbar-light">
           {children}
         </main>
 
         {/* Footer */}
-        <footer className="bg-surface-dim/20 py-4 px-6 border-t border-outline-variant/10">
-          <div className="text-center text-[10px] text-on-surface-variant font-medium">
+        <footer className="bg-surface-dim/20 py-2 px-6 border-t border-outline-variant/10 print:hidden">
+          <div className="text-center text-[9px] text-on-surface-variant font-medium">
             © 2026 Jambo Group | MCC System Developed by Mtani Malima
           </div>
         </footer>

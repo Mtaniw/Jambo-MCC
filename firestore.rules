@@ -48,35 +48,55 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() && (
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.lower() == 'admin' || 
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.lower() == 'super user')) ||
-        request.auth.token.email.lower() == "mtaniwambura@gmail.com"
+        request.auth.token.email.lower() == "mtaniwambura@gmail.com" ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.lower() == 'admin' ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.lower() == 'super user' ||
+          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('roleOverride', '').lower() == 'admin') ||
+          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('roleOverride', '').lower() == 'super user')
+        ))
       );
     }
 
     function hasRole(role) {
-      return isAuthenticated() && 
-             (isAdmin() || (
-               exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.lower() == role.lower()
-             ));
+      return isAuthenticated() && (
+        isAdmin() || (
+          exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.lower() == role.lower() ||
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('roleOverride', '').lower() == role.lower()
+          )
+        )
+      );
+    }
+
+    function hasAnyRole(roles) {
+      return isAuthenticated() && (
+        isAdmin() || (
+          exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.lower() in roles ||
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('roleOverride', '').lower() in roles
+          )
+        )
+      );
     }
 
     function isAssignedToMCC(mccId) {
       return isAuthenticated() && (
         isAdmin() || 
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-         (mccId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.mccIds || 
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.lower() == 'viewer' ||
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.lower() == 'supervisor' ||
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.lower() == 'manager' ||
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.lower() == 'director'))
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
+          mccId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.mccIds || 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.lower() in ['viewer', 'supervisor', 'manager', 'director'] ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('roleOverride', '').lower() in ['viewer', 'supervisor', 'manager', 'director']
+        ))
       );
     }
 
     function isValidString(val, min, max) {
       return val is string && val.size() >= min && val.size() <= max;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
     // ===============================================================
@@ -97,27 +117,32 @@ service cloud.firestore {
 
     match /sellers/{sellerId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin() || hasRole('Cashier') || hasRole('Supervisor');
+      allow create, update: if hasAnyRole(['cashier', 'supervisor', 'quality controller', 'manager', 'director', 'admin', 'super user']);
+      allow delete: if isAdmin();
     }
 
     match /daily_register/{entryId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin() || hasRole('Cashier') || hasRole('Grader') || hasRole('Supervisor');
+      allow create, update: if hasAnyRole(['cashier', 'grader', 'supervisor', 'quality controller', 'factory clerk', 'manager', 'director', 'admin', 'super user']);
+      allow delete: if hasAnyRole(['cashier', 'grader', 'quality controller', 'factory clerk', 'admin', 'super user']);
     }
 
     match /expenses/{expenseId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin() || hasRole('Cashier');
+      allow create, update: if hasAnyRole(['cashier', 'supervisor', 'admin', 'super user', 'manager', 'director']);
+      allow delete: if isAdmin();
     }
 
     match /money_received/{mrId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin() || hasRole('Cashier') || hasRole('Grader') || hasRole('Supervisor');
+      allow create, update: if hasAnyRole(['cashier', 'grader', 'quality controller', 'supervisor', 'admin', 'super user', 'manager', 'director']);
+      allow delete: if isAdmin();
     }
 
     match /truck_qa/{qaId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin() || hasRole('Grader') || hasRole('Supervisor') || hasRole('Factory Clerk');
+      allow create, update: if hasAnyRole(['grader', 'supervisor', 'factory clerk', 'quality controller', 'admin', 'super user', 'manager', 'director']);
+      allow delete: if isAdmin();
     }
 
     match /drivers/{driverId} {
@@ -127,17 +152,18 @@ service cloud.firestore {
 
     match /milk_cans/{canId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin() || hasRole('Cashier') || hasRole('Grader') || hasRole('Supervisor');
+      allow create, update: if hasAnyRole(['cashier', 'grader', 'supervisor', 'quality controller', 'admin', 'super user']);
+      allow delete: if isAdmin();
     }
 
     match /milk_can_inventory/{inventoryId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin() || hasRole('Cashier') || hasRole('Supervisor') || hasRole('Grader');
+      allow write: if hasAnyRole(['cashier', 'supervisor', 'grader', 'quality controller', 'admin', 'super user']);
     }
 
     match /rejects/{rejectId} {
       allow read: if isAuthenticated();
-      allow create, update: if isAdmin() || hasRole('Grader') || hasRole('Cashier') || hasRole('Supervisor');
+      allow create, update: if hasAnyRole(['grader', 'cashier', 'supervisor', 'quality controller', 'factory clerk', 'manager', 'director', 'admin', 'super user']);
       allow delete: if isAdmin();
     }
 
@@ -149,6 +175,41 @@ service cloud.firestore {
     match /settings/{settingId} {
       allow read: if true;
       allow write: if isAdmin();
+    }
+
+    function isValidReceipt(data) {
+      return data.keys().hasAll(['fileName', 'mimeType', 'size', 'chunkCount', 'parentCollection', 'createdAt']) &&
+        data.keys().hasOnly(['fileName', 'mimeType', 'size', 'chunkCount', 'data', 'parentCollection', 'uploadedBy', 'createdAt']) &&
+        isValidString(data.fileName, 1, 255) &&
+        isValidString(data.mimeType, 1, 100) &&
+        data.size is number && data.size > 0 && data.size <= 5242880 &&
+        data.chunkCount is number && data.chunkCount >= 0 && data.chunkCount <= 20 &&
+        data.parentCollection in ['expenses', 'money_received'] &&
+        isValidString(data.createdAt, 1, 64) &&
+        (!('data' in data) || (data.data is string && data.data.size() <= 900000)) &&
+        (!('uploadedBy' in data) || isValidString(data.uploadedBy, 0, 200));
+    }
+
+    match /receipts/{receiptId} {
+      allow read: if isAuthenticated();
+      allow create: if hasAnyRole(['cashier', 'grader', 'quality controller', 'supervisor', 'factory clerk', 'admin', 'super user', 'manager', 'director']) &&
+        isValidId(receiptId) &&
+        isValidReceipt(request.resource.data);
+      allow update: if hasAnyRole(['cashier', 'grader', 'quality controller', 'supervisor', 'factory clerk', 'admin', 'super user', 'manager', 'director']) &&
+        isValidId(receiptId) &&
+        isValidReceipt(request.resource.data);
+      allow delete: if hasAnyRole(['cashier', 'grader', 'quality controller', 'supervisor', 'factory clerk', 'admin', 'super user', 'manager', 'director']);
+
+      match /chunks/{chunkId} {
+        allow read: if isAuthenticated();
+        allow create, update: if hasAnyRole(['cashier', 'grader', 'quality controller', 'supervisor', 'factory clerk', 'admin', 'super user', 'manager', 'director']) &&
+          request.resource.data.keys().hasAll(['index', 'data']) &&
+          request.resource.data.keys().hasOnly(['index', 'data']) &&
+          request.resource.data.index is number &&
+          request.resource.data.data is string &&
+          request.resource.data.data.size() <= 900000;
+        allow delete: if hasAnyRole(['cashier', 'grader', 'quality controller', 'supervisor', 'factory clerk', 'admin', 'super user', 'manager', 'director']);
+      }
     }
 
     // Default deny

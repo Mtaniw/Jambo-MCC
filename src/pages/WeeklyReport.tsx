@@ -198,22 +198,22 @@ export default function WeeklyReport() {
       r.no,
       r.displayDate,
       r.sellers,
-      formatNumber(r.totalLiters, 2),
-      formatNumber(r.paidLiters, 2),
-      formatNumber(r.paidAmount, 0),
-      formatNumber(r.unpaidAmount, 0),
-      formatNumber(r.totalAmount, 0)
+      formatNumber(r.totalLiters, 2, false, true),
+      formatNumber(r.paidLiters, 2, false, true),
+      formatNumber(r.paidAmount, 2, true, true),
+      formatNumber(r.unpaidAmount, 2, true, true),
+      formatNumber(r.totalAmount, 2, true, true)
     ]);
 
     tableData.push([
       '',
       'TOTALS',
       reportData.totals.sellers,
-      formatNumber(reportData.totals.totalLiters, 2),
-      formatNumber(reportData.totals.paidLiters, 2),
-      formatNumber(reportData.totals.paidAmount, 0),
-      formatNumber(reportData.totals.unpaidAmount, 0),
-      formatNumber(reportData.totals.totalAmount, 0)
+      formatNumber(reportData.totals.totalLiters, 2, false, true),
+      formatNumber(reportData.totals.paidLiters, 2, false, true),
+      formatNumber(reportData.totals.paidAmount, 2, true, true),
+      formatNumber(reportData.totals.unpaidAmount, 2, true, true),
+      formatNumber(reportData.totals.totalAmount, 2, true, true)
     ]);
 
     (doc as any).autoTable({
@@ -350,12 +350,12 @@ export default function WeeklyReport() {
                   <td className="px-6 py-4 text-sm font-medium text-on-surface-variant">{row.no}</td>
                   <td className="px-6 py-4 text-sm font-bold text-on-surface group-hover:text-primary transition-colors">{row.displayDate}</td>
                   <td className="px-6 py-4 text-sm text-center">{row.sellers}</td>
-                  <td className="px-6 py-4 text-sm text-right font-medium">{formatNumber(row.totalLiters, 2)}</td>
-                  <td className="px-6 py-4 text-sm text-right text-error font-medium">{formatNumber(row.rejectedLiters, 2)}</td>
-                  <td className="px-6 py-4 text-sm text-right text-green-600">{formatNumber(row.paidLiters, 2)}</td>
-                  <td className="px-6 py-4 text-sm text-right font-bold">{formatNumber(row.paidAmount, 0)}</td>
-                  <td className="px-6 py-4 text-sm text-right text-red-600">{formatNumber(row.unpaidAmount, 0)}</td>
-                  <td className="px-6 py-4 text-sm text-right font-black text-primary">{formatNumber(row.totalAmount, 0)}</td>
+                  <td className="px-6 py-4 text-sm text-right font-medium">{formatNumber(row.totalLiters, 2, false, true)}</td>
+                  <td className="px-6 py-4 text-sm text-right text-error font-medium">{formatNumber(row.rejectedLiters, 2, false, true)}</td>
+                  <td className="px-6 py-4 text-sm text-right text-green-600">{formatNumber(row.paidLiters, 2, false, true)}</td>
+                  <td className="px-6 py-4 text-sm text-right font-bold">{formatNumber(row.paidAmount, 2, true, true)}</td>
+                  <td className="px-6 py-4 text-sm text-right text-red-600">{formatNumber(row.unpaidAmount, 2, true, true)}</td>
+                  <td className="px-6 py-4 text-sm text-right font-black text-primary">{formatNumber(row.totalAmount, 2, true, true)}</td>
                 </tr>
               ))}
               {reportData.rows.length === 0 && (
@@ -370,12 +370,12 @@ export default function WeeklyReport() {
               <tr className="font-black text-on-surface">
                 <td colSpan={2} className="px-6 py-4 text-right uppercase tracking-wider text-xs">Grand Totals</td>
                 <td className="px-6 py-4 text-center">{reportData.totals.sellers}</td>
-                <td className="px-6 py-4 text-right">{formatNumber(reportData.totals.totalLiters, 2)}</td>
-                <td className="px-6 py-4 text-right text-error">{formatNumber(reportData.totals.rejectedLiters, 2)}</td>
-                <td className="px-6 py-4 text-right text-green-600">{formatNumber(reportData.totals.paidLiters, 2)}</td>
-                <td className="px-6 py-4 text-right">{formatNumber(reportData.totals.paidAmount, 0)}</td>
-                <td className="px-6 py-4 text-right text-red-600">{formatNumber(reportData.totals.unpaidAmount, 0)}</td>
-                <td className="px-6 py-4 text-right text-primary text-lg">{formatNumber(reportData.totals.totalAmount, 0)}</td>
+                <td className="px-6 py-4 text-right">{formatNumber(reportData.totals.totalLiters, 2, false, true)}</td>
+                <td className="px-6 py-4 text-right text-error">{formatNumber(reportData.totals.rejectedLiters, 2, false, true)}</td>
+                <td className="px-6 py-4 text-right text-green-600">{formatNumber(reportData.totals.paidLiters, 2, false, true)}</td>
+                <td className="px-6 py-4 text-right">{formatNumber(reportData.totals.paidAmount, 2, true, true)}</td>
+                <td className="px-6 py-4 text-right text-red-600">{formatNumber(reportData.totals.unpaidAmount, 2, true, true)}</td>
+                <td className="px-6 py-4 text-right text-primary text-lg">{formatNumber(reportData.totals.totalAmount, 2, true, true)}</td>
               </tr>
             </tfoot>
           </table>

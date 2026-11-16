@@ -8,8 +8,27 @@ import { Plus, Trash2, Check, X, Shield, MapPin, Users, Edit2, Phone, Tag, Toggl
 import { cn } from '../lib/utils';
 
 export default function Admin() {
-  const { profile } = useAuth();
+  const { profile, effectiveRole, loading } = useAuth();
+  const isActualAdmin = (profile && (profile.role === 'Admin' || profile.role === 'Super User' || profile.roleOverride === 'Admin' || profile.roleOverride === 'Super User')) ||
+                        (effectiveRole === 'Admin' || effectiveRole === 'Super User') ||
+                        (profile?.email?.toLowerCase() === 'mtaniwambura@gmail.com');
   const [searchParams, setSearchParams] = useSearchParams();
+
+  if (loading) return <div className="flex justify-center p-12"><Plus className="animate-spin text-primary" /></div>;
+
+  if (!isActualAdmin) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-8">
+        <div className="w-20 h-20 bg-error/10 text-error rounded-full flex items-center justify-center mb-6">
+          <AlertTriangle size={40} />
+        </div>
+        <h1 className="text-3xl font-black text-on-surface tracking-tight">Access Restricted</h1>
+        <p className="mt-2 text-on-surface-variant max-w-sm mx-auto font-medium">
+          The Admin Control Panel is reserved for system administrators. Please contact support if you require elevated permissions.
+        </p>
+      </div>
+    );
+  }
   const [users, setUsers] = useState<any[]>([]);
   const [mccs, setMccs] = useState<any[]>([]);
   const [sellers, setSellers] = useState<any[]>([]);
@@ -27,13 +46,17 @@ export default function Admin() {
     setActiveTab(tab as any);
     setSearchParams({ tab });
   };
+  const [selectedMcc, setSelectedMcc] = useState<any | null>(null);
   const [isAddingMcc, setIsAddingMcc] = useState(false);
-  const [isAddingDriver, setIsAddingDriver] = useState(false);
-  const [isAddingSeller, setIsAddingSeller] = useState(false);
+  const [mccToDelete, setMccToDelete] = useState<any | null>(null);
+  const [isDeletingMcc, setIsDeletingMcc] = useState(false);
   const [selectedDriver, setSelectedDriver] = useState<any | null>(null);
+  const [isAddingDriver, setIsAddingDriver] = useState(false);
   const [selectedSeller, setSelectedSeller] = useState<any | null>(null);
+  const [isAddingSeller, setIsAddingSeller] = useState(false);
   const [selectedUser, setSelectedUser] = useState<any | null>(null);
   const [userSearchTerm, setUserSearchTerm] = useState('');
+  const [mccSearchTerm, setMccSearchTerm] = useState('');
   const [settings, setSettings] = useState({ 
     milkPrice: 1200,
     systemName: 'Jambo MCC Management System',
@@ -42,10 +65,9 @@ export default function Admin() {
     logoUrl: 'https://lh3.googleusercontent.com/aida/ADBb0uiCdrgZRYj1Imqfwxw4sPIxAsPSjWWx9Pr0aWPDVa5-_Rm1bTwdZ2TLFhW-9ZAB_si9aC0BQ7OWnieEDClcJUNnVYZzCYGEOjCz46Rk3kz9jlvRTOYiGQbxtD6JkkLePDVYyPSa7uVt_Pn-CX089J9DKeBzfM7WtFQYcyTlaKUlN2Wwq8U5CzbopOmTC6RxHGJ2jHxaMWLhsCZWoJszc9TiUnsh8yKObLs_z8gAyDRt_1eCr6CAfRAoctphD9HyqNGn5mbYYfZvzw',
     logoRed: '',
     logoWhite: '',
-    favicon: ''
+    favicon: '',
+    loginBgUrl: 'https://picsum.photos/seed/factory/1920/1080'
   });
-  const [firestoreRules, setFirestoreRules] = useState('');
-  const [isSavingRules, setIsSavingRules] = useState(false);
   const [userRoleFilter, setUserRoleFilter] = useState('all');
   const [userStatusFilter, setUserStatusFilter] = useState('all');
   const [isSavingSettings, setIsSavingSettings] = useState(false);
@@ -56,7 +78,8 @@ export default function Admin() {
   const roles = ['Super User', 'Admin', 'Cashier', 'Quality Controller', 'Supervisor', 'Manager', 'Director', 'Factory Clerk', 'Viewer'];
   const pages = ['Daily Register', 'Factory Intake', 'Truck & QA', 'Rejects', 'Dashboard', 'Expenses', 'Funds', 'Milk Cans', 'Reports', 'Sellers', 'Admin'];
   const widgets = [
-    'Total Litres', 'Total Paid', 'Total Unpaid', 'Station Expenses', 
+    'Total Litres', 'Total Sent', 'Total Received', 'Dispatch Difference',
+    'Total Paid', 'Total Unpaid', 'Station Expenses', 
     'Net Balance', 'Cans Issued', 'Today\'s Rejects', 'Active Sellers', 
     'MCC Performance', 'Recent Milk Intake', 'MCC Network Status'
   ];
@@ -161,13 +184,16 @@ export default function Admin() {
         setSettings(prev => ({ ...prev, ...snap.data() }));
       }
     }, (error) => handleFirestoreError(error, OperationType.GET, 'settings/global_config'));
-    const unsubRules = onSnapshot(doc(db, 'settings', 'firestore_rules'), (snap) => {
-      if (snap.exists()) {
-        setFirestoreRules(snap.data().rules || '');
-      }
-    }, (error) => handleFirestoreError(error, OperationType.GET, 'settings/firestore_rules'));
-    return () => { unsubUsers(); unsubMccs(); unsubSellers(); unsubSettings(); unsubDrivers(); unsubRules(); };
+
+    return () => { unsubUsers(); unsubMccs(); unsubSellers(); unsubSettings(); unsubDrivers(); };
   }, [profile]);
+
+  const filteredMccs = useMemo(() => {
+    return mccs.filter(m => 
+      (m.name || '').toLowerCase().includes(mccSearchTerm.toLowerCase()) || 
+      (m.location || '').toLowerCase().includes(mccSearchTerm.toLowerCase())
+    ).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  }, [mccs, mccSearchTerm]);
 
   const filteredUsers = useMemo(() => {
     return users.filter(u => {
@@ -409,12 +435,56 @@ export default function Admin() {
   const handleAddMcc = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await addDoc(collection(db, 'mccs'), { ...mccForm, createdAt: new Date().toISOString() });
+      await addDoc(collection(db, 'mccs'), {
+        ...mccForm,
+        name: mccForm.name.trim(),
+        location: mccForm.location.trim(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
       setIsAddingMcc(false);
       setMccForm({ name: '', location: '', status: 'Active', manager: '', qualityController: '', supervisor: '', fieldOfficer: '', driver: '', director: '', cashier: '' });
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'mccs');
-      alert('Failed to add MCC.');
+    }
+  };
+
+  const handleUpdateMcc = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedMcc) return;
+    try {
+      await updateDoc(doc(db, 'mccs', selectedMcc.id), {
+        name: (selectedMcc.name || '').trim(),
+        location: (selectedMcc.location || '').trim(),
+        status: selectedMcc.status || 'Active',
+        manager: selectedMcc.manager || '',
+        qualityController: selectedMcc.qualityController || '',
+        supervisor: selectedMcc.supervisor || '',
+        fieldOfficer: selectedMcc.fieldOfficer || '',
+        driver: selectedMcc.driver || '',
+        director: selectedMcc.director || '',
+        cashier: selectedMcc.cashier || '',
+        updatedAt: new Date().toISOString()
+      });
+      setSelectedMcc(null);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `mccs/${selectedMcc.id}`);
+    }
+  };
+
+  const handleDeleteMcc = async () => {
+    if (!mccToDelete || isDeletingMcc) return;
+    setIsDeletingMcc(true);
+    try {
+      await deleteDoc(doc(db, 'mccs', mccToDelete.id));
+      if (selectedMcc?.id === mccToDelete.id) {
+        setSelectedMcc(null);
+      }
+      setMccToDelete(null);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `mccs/${mccToDelete.id}`);
+    } finally {
+      setIsDeletingMcc(false);
     }
   };
 
@@ -436,25 +506,12 @@ export default function Admin() {
     }
   };
 
-  const handleSaveRules = async () => {
-    setIsSavingRules(true);
-    try {
-      await setDoc(doc(db, 'settings', 'firestore_rules'), { rules: firestoreRules, updatedAt: new Date().toISOString() });
-      alert('Firestore rules saved to database! Note: Actual deployment requires Firebase CLI.');
-    } catch (err) {
-      console.error('Error saving rules:', err);
-      alert('Failed to save rules.');
-    } finally {
-      setIsSavingRules(false);
-    }
-  };
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, type: 'logoRed' | 'logoWhite' | 'favicon') => {
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, type: 'logoRed' | 'logoWhite' | 'favicon' | 'loginBgUrl') => {
     const file = e.target.files?.[0];
     if (!file) return;
     
-    if (file.size > 500 * 1024) {
-      alert('File is too large. Please upload an image under 500KB.');
+    if (file.size > 1024 * 1024) { // Increase to 1MB for background
+      alert('File is too large. Please upload an image under 1MB.');
       return;
     }
 
@@ -476,40 +533,35 @@ export default function Admin() {
   };
 
   return (
-    <div className="space-y-8">
-      <div className="flex items-center justify-between">
+    <div className="space-y-8 pb-10">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-on-surface">Admin Control Panel</h1>
-          <p className="text-on-surface-variant text-sm">Manage users, collection centers, and supplier directory</p>
+          <h1 className="text-4xl font-black text-on-surface tracking-tighter">Admin Control Panel</h1>
+          <p className="text-on-surface-variant font-medium mt-1">Manage users, collection centers, and supplier directory</p>
         </div>
-          <div className="bg-white p-2 rounded-lg shadow-sm border border-outline-variant/10">
-            <img 
-              src={settings.logoUrl || "https://lh3.googleusercontent.com/aida/ADBb0uiCdrgZRYj1Imqfwxw4sPIxAsPSjWWx9Pr0aWPDVa5-_Rm1bTwdZ2TLFhW-9ZAB_si9aC0BQ7OWnieEDClcJUNnVYZzCYGEOjCz46Rk3kz9jlvRTOYiGQbxtD6JkkLePDVYyPSa7uVt_Pn-CX089J9DKeBzfM7WtFQYcyTlaKUlN2Wwq8U5CzbopOmTC6RxHGJ2jHxaMWLhsCZWoJszc9TiUnsh8yKObLs_z8gAyDRt_1eCr6CAfRAoctphD9HyqNGn5mbYYfZvzw"} 
-              alt="Jambo Group" 
-              className="h-10 w-auto object-contain" 
-              referrerPolicy="no-referrer"
-            />
-          </div>
+        {/* Logo removed as requested */}
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-4 border-b border-outline-variant/20 overflow-x-auto no-scrollbar">
+      {/* Tabs - More premium look */}
+      <div className="flex gap-2 p-1.5 bg-surface-container-low rounded-2xl overflow-x-auto no-scrollbar border border-outline-variant/10">
         {[
-          { id: 'users', name: 'User Management', icon: Shield },
-          { id: 'mccs', name: 'MCC Management', icon: MapPin },
-          { id: 'drivers', name: 'Drivers Management', icon: Truck },
-          { id: 'sellers', name: 'Seller Directory', icon: Users },
-          { id: 'settings', name: 'System Settings', icon: Settings },
+          { id: 'users', name: 'Users', icon: Shield },
+          { id: 'mccs', name: 'MCCs', icon: MapPin },
+          { id: 'drivers', name: 'Drivers', icon: Truck },
+          { id: 'sellers', name: 'Suppliers', icon: Users },
+          { id: 'settings', name: 'Settings', icon: Settings },
         ].map(tab => (
           <button
             key={tab.id}
             onClick={() => handleTabChange(tab.id)}
             className={cn(
-              "flex items-center gap-2 px-4 py-3 font-bold text-sm transition-all border-b-2 whitespace-nowrap",
-              activeTab === tab.id ? "border-primary text-primary" : "border-transparent text-on-surface-variant hover:text-on-surface"
+              "flex items-center gap-2 px-6 py-3 font-black text-xs uppercase tracking-widest transition-all rounded-xl",
+              activeTab === tab.id 
+                ? "bg-white text-primary shadow-sm" 
+                : "text-on-surface-variant hover:bg-white/50 hover:text-on-surface"
             )}
           >
-            <tab.icon size={18} />
+            <tab.icon size={16} />
             {tab.name}
           </button>
         ))}
@@ -600,10 +652,10 @@ export default function Admin() {
                       <div className="flex flex-wrap gap-1">
                         {user.mccIds?.map((id: string) => (
                           <span key={id} className="text-[9px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-bold">
-                            {mccs.find(m => m.id === id)?.name || id}
+                            {mccs.find(m => m.id === id)?.name || id || 'Unknown'}
                           </span>
                         ))}
-                        {(!user.mccIds || user.mccIds.length === 0) && <span className="text-[9px] opacity-40 italic">None</span>}
+                        {(!user.mccIds || user.mccIds.length === 0) && <span className="text-[9px] opacity-40 italic font-medium text-on-surface-variant">Unassigned</span>}
                       </div>
                     </td>
                     <td className="px-6 py-4">
@@ -687,69 +739,260 @@ export default function Admin() {
       {/* MCC Management */}
       {activeTab === 'mccs' && (
         <div className="space-y-4">
-          <div className="flex justify-end">
+          <div className="bg-white p-4 rounded-xl border border-outline-variant/20 shadow-sm flex flex-wrap gap-4 items-center">
+            <div className="flex-1 min-w-[200px] relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant" size={18} />
+              <input 
+                placeholder="Search MCCs by name or location..." 
+                value={mccSearchTerm}
+                onChange={e => setMccSearchTerm(e.target.value)}
+                className="w-full pl-10 bg-surface-container-low border-none rounded-lg text-sm"
+              />
+            </div>
             <button onClick={() => setIsAddingMcc(true)} className="bg-primary text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2">
               <Plus size={18} /> Add MCC
             </button>
           </div>
-          {isAddingMcc && (
-            <form onSubmit={handleAddMcc} className="bg-white p-6 rounded-xl border border-outline-variant/20 shadow-sm grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              <input placeholder="MCC Name" value={mccForm.name} onChange={e => setMccForm({...mccForm, name: e.target.value})} className="bg-surface-container-low border-none rounded-lg p-2" required />
-              <input placeholder="Location" value={mccForm.location} onChange={e => setMccForm({...mccForm, location: e.target.value})} className="bg-surface-container-low border-none rounded-lg p-2" required />
-              <select value={mccForm.status} onChange={e => setMccForm({...mccForm, status: e.target.value})} className="bg-surface-container-low border-none rounded-lg p-2">
-                <option value="Active">Active</option>
-                <option value="Closed">Closed</option>
-                <option value="Coming Soon">Coming Soon</option>
-                <option value="Planned">Planned</option>
-              </select>
-              <div className="flex gap-2 lg:col-span-3 justify-end">
-                <button type="button" onClick={() => setIsAddingMcc(false)} className="px-4 py-2">Cancel</button>
-                <button type="submit" className="bg-primary text-white px-6 py-2 rounded-lg font-bold">Save MCC</button>
+
+      {/* MCC Modal */}
+      {(isAddingMcc || selectedMcc) && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100] animate-in fade-in duration-200">
+          <div className="bg-white rounded-[2rem] w-full max-w-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-8 border-b border-outline-variant/10 flex justify-between items-center bg-surface-container-low">
+              <div>
+                <h2 className="text-2xl font-black tracking-tight">{selectedMcc ? 'Edit MCC' : 'Add New MCC'}</h2>
+                <p className="text-xs text-on-surface-variant font-bold uppercase tracking-widest">{selectedMcc ? 'Update existing collection center' : 'Register a new collection center'}</p>
               </div>
-            </form>
-          )}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {mccs.map(mcc => (
-              <div key={mcc.id} className="bg-white p-6 rounded-xl border border-outline-variant/20 shadow-sm space-y-4">
-                <div className="flex justify-between items-start">
-                  <h3 className="font-bold text-lg">{mcc.name}</h3>
-                  <select 
-                    value={mcc.status} 
-                    onChange={e => handleUpdateMccField(mcc.id, 'status', e.target.value)}
-                    className="text-[10px] font-bold uppercase bg-surface-container-low px-2 py-1 rounded border-none focus:ring-0 cursor-pointer"
+              <button onClick={() => { setIsAddingMcc(false); setSelectedMcc(null); }} className="p-2 hover:bg-surface-container-high rounded-full transition-colors">
+                <X size={24} />
+              </button>
+            </div>
+            
+            <form onSubmit={selectedMcc ? handleUpdateMcc : handleAddMcc} className="p-8 space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase text-on-surface-variant tracking-widest ml-1">MCC Name</label>
+                  <input 
+                    placeholder="e.g. Kahama Main" 
+                    value={selectedMcc ? (selectedMcc.name || '') : mccForm.name} 
+                    onChange={e => selectedMcc ? setSelectedMcc({...selectedMcc, name: e.target.value}) : setMccForm({...mccForm, name: e.target.value})} 
+                    className="w-full bg-surface-container-low border-none rounded-2xl p-4 text-sm font-bold focus:ring-2 focus:ring-primary/20 transition-all" 
+                    required 
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase text-on-surface-variant tracking-widest ml-1">Location</label>
+                  <input 
+                    placeholder="e.g. Shinyanga" 
+                    value={selectedMcc ? (selectedMcc.location || '') : mccForm.location} 
+                    onChange={e => selectedMcc ? setSelectedMcc({...selectedMcc, location: e.target.value}) : setMccForm({...mccForm, location: e.target.value})} 
+                    className="w-full bg-surface-container-low border-none rounded-2xl p-4 text-sm font-bold focus:ring-2 focus:ring-primary/20 transition-all" 
+                    required 
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase text-on-surface-variant tracking-widest ml-1">Status</label>
+                  <select
+                    value={selectedMcc ? (selectedMcc.status || 'Active') : mccForm.status}
+                    onChange={e => selectedMcc ? setSelectedMcc({...selectedMcc, status: e.target.value}) : setMccForm({...mccForm, status: e.target.value})}
+                    className="w-full bg-surface-container-low border-none rounded-2xl p-4 text-sm font-bold focus:ring-2 focus:ring-primary/20 transition-all"
                   >
                     <option value="Active">Active</option>
-                    <option value="Closed">Closed</option>
                     <option value="Coming Soon">Coming Soon</option>
                     <option value="Planned">Planned</option>
+                    <option value="Inactive">Inactive</option>
                   </select>
                 </div>
-                <div className="space-y-3 text-sm text-on-surface-variant">
-                  <p className="flex items-center gap-2"><MapPin size={14} /> {mcc.location}</p>
-                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-outline-variant/10">
-                    {[
-                      { label: 'Manager', field: 'manager' },
-                      { label: 'Cashier', field: 'cashier' },
-                      { label: 'Quality Controller', field: 'qualityController' },
-                      { label: 'Supervisor', field: 'supervisor' },
-                      { label: 'Field Officer', field: 'fieldOfficer' },
-                      { label: 'Driver', field: 'driver' },
-                      { label: 'Director', field: 'director' },
-                    ].map(role => (
-                      <div key={role.field} className="space-y-1">
-                        <label className="text-[10px] font-bold uppercase opacity-60">{role.label}</label>
-                        <input 
-                          value={mcc[role.field] || ''} 
-                          onChange={e => handleUpdateMccField(mcc.id, role.field, e.target.value)}
-                          placeholder="Name..."
-                          className="w-full text-xs bg-surface-container-low border-none rounded p-1"
-                        />
-                      </div>
-                    ))}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4 bg-surface-container-low rounded-3xl">
+                {[
+                  { label: 'Manager', field: 'manager' },
+                  { label: 'Cashier', field: 'cashier' },
+                  { label: 'Quality QC', field: 'qualityController' },
+                  { label: 'Supervisor', field: 'supervisor' },
+                  { label: 'Field Officer', field: 'fieldOfficer' },
+                  { label: 'Driver', field: 'driver' },
+                  { label: 'Director', field: 'director' }
+                ].map(role => (
+                  <div key={role.field} className="space-y-1">
+                    <label className="text-[9px] font-black uppercase text-on-surface-variant tracking-tighter ml-1">{role.label}</label>
+                    <input 
+                      value={selectedMcc ? (selectedMcc as any)[role.field] || '' : (mccForm as any)[role.field] || ''} 
+                      onChange={e => selectedMcc ? setSelectedMcc({...selectedMcc, [role.field]: e.target.value}) : setMccForm({...mccForm, [role.field]: e.target.value})}
+                      className="w-full bg-white/50 border-none rounded-xl p-2.5 text-xs font-bold focus:ring-2 focus:ring-primary/10 transition-all"
+                      placeholder={`Assign name...`}
+                    />
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap gap-3 pt-4">
+                {selectedMcc && (
+                  <button
+                    type="button"
+                    onClick={() => setMccToDelete(selectedMcc)}
+                    className="px-5 py-4 font-black uppercase text-[10px] tracking-widest text-error bg-error/10 hover:bg-error/20 rounded-2xl transition-all flex items-center gap-2"
+                  >
+                    <Trash2 size={16} /> Delete
+                  </button>
+                )}
+                <button type="button" onClick={() => { setIsAddingMcc(false); setSelectedMcc(null); }} className="flex-1 py-4 font-black uppercase text-[10px] tracking-widest text-on-surface-variant hover:bg-surface-container-low rounded-2xl transition-all">Cancel</button>
+                <button type="submit" className="flex-[2] bg-primary text-white py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-xl shadow-primary/20 hover:shadow-primary/40 transition-all flex items-center justify-center gap-2">
+                  <Check size={18} /> {selectedMcc ? 'Update MCC' : 'Save MCC Center'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MCC Delete Confirmation Modal */}
+      {mccToDelete && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[120] animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 mb-3 text-error">
+              <AlertTriangle size={24} />
+              <h3 className="text-lg font-black">Delete MCC Center</h3>
+            </div>
+            <p className="text-sm text-on-surface-variant mb-6">
+              Are you sure you want to permanently delete <span className="font-bold text-on-surface">{mccToDelete.name}</span>? This action cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setMccToDelete(null)}
+                disabled={isDeletingMcc}
+                className="flex-1 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider text-on-surface-variant hover:bg-surface-container-low transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteMcc}
+                disabled={isDeletingMcc}
+                className="flex-1 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider bg-error text-white hover:bg-red-700 transition-colors disabled:opacity-50"
+              >
+                {isDeletingMcc ? 'Deleting...' : 'Delete MCC'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Driver Modal */}
+      {(isAddingDriver || selectedDriver) && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100] animate-in fade-in duration-200">
+          <div className="bg-white rounded-[2rem] w-full max-w-lg shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-8 border-b border-outline-variant/10 flex justify-between items-center bg-surface-container-low">
+              <div>
+                <h2 className="text-2xl font-black tracking-tight">{selectedDriver ? 'Edit Driver' : 'Add New Driver'}</h2>
+                <p className="text-xs text-on-surface-variant font-bold uppercase tracking-widest">{selectedDriver ? 'Update tanker personnel' : 'Register a new tanker driver'}</p>
+              </div>
+              <button onClick={() => { setIsAddingDriver(false); setSelectedDriver(null); }} className="p-2 hover:bg-surface-container-high rounded-full transition-colors">
+                <X size={24} />
+              </button>
+            </div>
+            
+            <form onSubmit={selectedDriver ? handleUpdateDriver : handleAddDriver} className="p-8 space-y-6">
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase text-on-surface-variant tracking-widest ml-1">Driver Name</label>
+                  <input placeholder="Full Name" value={selectedDriver ? selectedDriver.name : driverForm.name} onChange={e => selectedDriver ? setSelectedDriver({...selectedDriver, name: e.target.value}) : setDriverForm({...driverForm, name: e.target.value})} className="w-full bg-surface-container-low border-none rounded-2xl p-4 text-sm font-bold" required />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase text-on-surface-variant tracking-widest ml-1">Phone Number</label>
+                  <input placeholder="e.g. 0712..." value={selectedDriver ? selectedDriver.phone : driverForm.phone} onChange={e => selectedDriver ? setSelectedDriver({...selectedDriver, phone: e.target.value}) : setDriverForm({...driverForm, phone: e.target.value})} className="w-full bg-surface-container-low border-none rounded-2xl p-4 text-sm font-bold" required />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase text-on-surface-variant tracking-widest ml-1">Tanker Reg No</label>
+                  <input placeholder="e.g. T 123 ABC" value={selectedDriver ? selectedDriver.tankerReg : driverForm.tankerReg} onChange={e => selectedDriver ? setSelectedDriver({...selectedDriver, tankerReg: e.target.value}) : setDriverForm({...driverForm, tankerReg: e.target.value})} className="w-full bg-surface-container-low border-none rounded-2xl p-4 text-sm font-bold" required />
+                </div>
+              </div>
+
+              <div className="flex gap-4 pt-4">
+                <button type="button" onClick={() => { setIsAddingDriver(false); setSelectedDriver(null); }} className="flex-1 py-4 font-black uppercase text-[10px] tracking-widest">Cancel</button>
+                <button type="submit" className="flex-[2] bg-primary text-white py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-xl shadow-primary/20 transition-all flex items-center justify-center gap-2">
+                  <Check size={18} /> {selectedDriver ? 'Update Driver' : 'Save Driver'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filteredMccs.map(mcc => (
+              <div
+                key={mcc.id}
+                onClick={() => setSelectedMcc(mcc)}
+                className="bg-white p-6 rounded-xl border border-outline-variant/20 shadow-sm space-y-4 group relative cursor-pointer hover:border-primary/40 hover:shadow-md transition-all"
+              >
+                <div className="flex justify-between items-start gap-2">
+                  <div className="min-w-0">
+                    <h3 className="font-bold text-lg group-hover:text-primary transition-colors truncate">{mcc.name}</h3>
+                    <p className="text-xs text-on-surface-variant flex items-center gap-1"><MapPin size={12} /> {mcc.location}</p>
+                  </div>
+                  <div className="flex flex-col items-end gap-2 shrink-0">
+                    <span className={cn(
+                      "text-[10px] font-black uppercase px-2 py-1 rounded",
+                      mcc.status === 'Active' ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"
+                    )}>
+                      {mcc.status}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <button 
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedMcc(mcc);
+                        }}
+                        title="Edit MCC"
+                        className="p-1.5 bg-surface-container-low text-primary hover:bg-primary/10 rounded-lg transition-colors"
+                      >
+                        <Edit2 size={14} />
+                      </button>
+                      <button 
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setMccToDelete(mcc);
+                        }}
+                        title="Delete MCC"
+                        className="p-1.5 bg-surface-container-low text-error hover:bg-red-50 rounded-lg transition-colors"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-outline-variant/10 text-[11px]">
+                  <div className="space-y-0.5">
+                    <p className="opacity-60 font-bold uppercase text-[9px]">Manager</p>
+                    <p className="font-medium truncate">{mcc.manager || '---'}</p>
+                  </div>
+                  <div className="space-y-0.5">
+                    <p className="opacity-60 font-bold uppercase text-[9px]">Cashier</p>
+                    <p className="font-medium truncate">{mcc.cashier || '---'}</p>
+                  </div>
+                  <div className="space-y-0.5">
+                    <p className="opacity-60 font-bold uppercase text-[9px]">Quality QC</p>
+                    <p className="font-medium truncate">{mcc.qualityController || '---'}</p>
+                  </div>
+                  <div className="space-y-0.5">
+                    <p className="opacity-60 font-bold uppercase text-[9px]">Supervisor</p>
+                    <p className="font-medium truncate">{mcc.supervisor || '---'}</p>
                   </div>
                 </div>
               </div>
             ))}
+            {filteredMccs.length === 0 && (
+              <div className="lg:col-span-3 py-20 text-center bg-surface-container-low rounded-2xl border border-dashed border-outline-variant/30">
+                <Search size={40} className="mx-auto mb-4 opacity-20" />
+                <p className="text-on-surface-variant font-medium">No MCCs found matching your search.</p>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -836,9 +1079,85 @@ export default function Admin() {
                 </select>
               </div>
             </div>
-            <button onClick={() => setIsAddingSeller(true)} className="bg-primary text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 whitespace-nowrap">
-              <Plus size={18} /> Add Seller
-            </button>
+      {/* Seller Modal */}
+      {(isAddingSeller || selectedSeller) && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100] animate-in fade-in duration-200">
+          <div className="bg-white rounded-[2rem] w-full max-w-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-8 border-b border-outline-variant/10 flex justify-between items-center bg-surface-container-low">
+              <div>
+                <h2 className="text-2xl font-black tracking-tight">{selectedSeller ? 'Edit Supplier' : 'Add New Supplier'}</h2>
+                <p className="text-xs text-on-surface-variant font-bold uppercase tracking-widest">{selectedSeller ? 'Update supplier information' : 'Register a new milk supplier'}</p>
+              </div>
+              <button onClick={() => { setIsAddingSeller(false); setSelectedSeller(null); }} className="p-2 hover:bg-surface-container-high rounded-full transition-colors">
+                <X size={24} />
+              </button>
+            </div>
+            
+            <form onSubmit={selectedSeller ? handleUpdateSeller : handleAddSeller} className="p-8 space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase text-on-surface-variant tracking-widest ml-1">Supplier Name</label>
+                  <input placeholder="Name" value={selectedSeller ? selectedSeller.name : sellerForm.name} onChange={e => selectedSeller ? setSelectedSeller({...selectedSeller, name: e.target.value}) : setSellerForm({...sellerForm, name: e.target.value})} className="w-full bg-surface-container-low border-none rounded-2xl p-4 text-sm font-bold" required />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase text-on-surface-variant tracking-widest ml-1">Phone Number</label>
+                  <input placeholder="Phone" value={selectedSeller ? selectedSeller.phone : sellerForm.phone} onChange={e => selectedSeller ? setSelectedSeller({...selectedSeller, phone: e.target.value}) : setSellerForm({...sellerForm, phone: e.target.value})} className="w-full bg-surface-container-low border-none rounded-2xl p-4 text-sm font-bold" />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase text-on-surface-variant tracking-widest ml-1">Location / Village</label>
+                  <input placeholder="Location" value={selectedSeller ? selectedSeller.location : sellerForm.location} onChange={e => selectedSeller ? setSelectedSeller({...selectedSeller, location: e.target.value}) : setSellerForm({...sellerForm, location: e.target.value})} className="w-full bg-surface-container-low border-none rounded-2xl p-4 text-sm font-bold" />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase text-on-surface-variant tracking-widest ml-1">Category</label>
+                  <select value={selectedSeller ? selectedSeller.category : sellerForm.category} onChange={e => selectedSeller ? setSelectedSeller({...selectedSeller, category: e.target.value}) : setSellerForm({...sellerForm, category: e.target.value})} className="w-full bg-surface-container-low border-none rounded-2xl p-4 text-sm font-bold">
+                    <option value="Farmer">Farmer</option>
+                    <option value="Middleman">Middleman</option>
+                    <option value="Business">Business</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase text-on-surface-variant tracking-widest ml-1">MCC Assignments</label>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  {mccs.map(mcc => (
+                    <label key={mcc.id} className="flex items-center gap-2 p-3 bg-surface-container-low rounded-xl cursor-pointer hover:bg-primary/5 transition-all border border-transparent hover:border-primary/20">
+                      <input 
+                        type="checkbox" 
+                        checked={selectedSeller ? (selectedSeller.mccIds || []).includes(mcc.id) : (sellerForm.mccIds || []).includes(mcc.id)}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          if (selectedSeller) {
+                            const ids = [...(selectedSeller.mccIds || [])];
+                            if (checked) ids.push(mcc.id);
+                            else ids.splice(ids.indexOf(mcc.id), 1);
+                            setSelectedSeller({...selectedSeller, mccIds: ids});
+                          } else {
+                            const ids = [...(sellerForm.mccIds || [])];
+                            if (checked) ids.push(mcc.id);
+                            else ids.splice(ids.indexOf(mcc.id), 1);
+                            setSellerForm({...sellerForm, mccIds: ids});
+                          }
+                        }}
+                        className="rounded border-outline-variant text-primary"
+                      />
+                      <span className="text-xs font-bold truncate">{mcc.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex gap-4 pt-4">
+                <button type="button" onClick={() => { setIsAddingSeller(false); setSelectedSeller(null); }} className="flex-1 py-4 font-black uppercase text-[10px] tracking-widest text-on-surface-variant hover:bg-surface-container-low rounded-2xl transition-all">Cancel</button>
+                <button type="submit" className="flex-[2] bg-primary text-white py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-xl shadow-primary/20 hover:shadow-primary/40 transition-all flex items-center justify-center gap-2">
+                  <Check size={18} /> {selectedSeller ? 'Update Supplier' : 'Save Supplier'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
             {sellers.some((s, i) => sellers.some((s2, j) => i !== j && s.name.toLowerCase() === s2.name.toLowerCase() && s.name.toLowerCase() === 'norah alfred')) && (
               <button 
                 onClick={() => {
@@ -1159,6 +1478,84 @@ export default function Admin() {
         </div>
       )}
 
+      {/* MCC Edit Modal */}
+      {selectedMcc && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl w-full max-w-2xl p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold">Edit MCC Details</h2>
+              <button onClick={() => setSelectedMcc(null)} className="p-1 hover:bg-surface-container-low rounded-full"><X size={20} /></button>
+            </div>
+            <form onSubmit={handleUpdateMcc} className="space-y-4 max-h-[85vh] overflow-y-auto pr-2 custom-scrollbar">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-bold uppercase tracking-wider opacity-60">MCC Name</label>
+                  <input 
+                    value={selectedMcc.name} 
+                    onChange={e => setSelectedMcc({...selectedMcc, name: e.target.value})}
+                    className="w-full bg-surface-container-low border-none rounded-lg p-3 text-sm"
+                    required
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold uppercase tracking-wider opacity-60">Location</label>
+                  <input 
+                    value={selectedMcc.location} 
+                    onChange={e => setSelectedMcc({...selectedMcc, location: e.target.value})}
+                    className="w-full bg-surface-container-low border-none rounded-lg p-3 text-sm"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold uppercase tracking-wider opacity-60">Status</label>
+                <select 
+                  value={selectedMcc.status} 
+                  onChange={e => setSelectedMcc({...selectedMcc, status: e.target.value})}
+                  className="w-full bg-surface-container-low border-none rounded-lg p-3 text-sm"
+                >
+                  <option value="Active">Active</option>
+                  <option value="Closed">Closed</option>
+                  <option value="Coming Soon">Coming Soon</option>
+                  <option value="Planned">Planned</option>
+                </select>
+              </div>
+
+              <div className="border-t border-outline-variant/10 pt-4 mt-4">
+                <h3 className="text-xs font-black uppercase text-on-surface-variant tracking-widest mb-4">Assigned Personnel</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {[
+                    { label: 'Manager', field: 'manager' },
+                    { label: 'Cashier', field: 'cashier' },
+                    { label: 'Quality Controller', field: 'qualityController' },
+                    { label: 'Supervisor', field: 'supervisor' },
+                    { label: 'Field Officer', field: 'fieldOfficer' },
+                    { label: 'Director', field: 'director' },
+                    { label: 'Driver', field: 'driver' },
+                  ].map(role => (
+                    <div key={role.field} className="space-y-1">
+                      <label className="text-[10px] font-bold uppercase opacity-60">{role.label}</label>
+                      <input 
+                        value={selectedMcc[role.field] || ''} 
+                        onChange={e => setSelectedMcc({...selectedMcc, [role.field]: e.target.value})}
+                        className="w-full bg-surface-container-low border-none rounded-lg p-2 text-xs"
+                        placeholder={`Assign ${role.label}...`}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="pt-6 flex gap-3 sticky bottom-0 bg-white pb-2">
+                <button type="button" onClick={() => setSelectedMcc(null)} className="flex-1 px-4 py-2 font-bold text-on-surface-variant">Cancel</button>
+                <button type="submit" className="flex-1 bg-primary text-white px-4 py-2 rounded-lg font-bold shadow-lg">Save Changes</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Driver Edit Modal */}
       {selectedDriver && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
@@ -1284,292 +1681,191 @@ export default function Admin() {
 
       {/* System Settings */}
       {activeTab === 'settings' && (
-        <div className="space-y-8">
-          {/* Role Simulation for Admins */}
-          {profile?.role === 'Admin' && (
-            <div className="bg-amber-50 p-6 rounded-xl border border-amber-200 shadow-sm">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="p-2 bg-amber-100 rounded-lg text-amber-700">
-                  <UserCog size={20} />
-                </div>
-                <div>
-                  <h3 className="font-bold text-amber-900">Admin Role Simulation</h3>
-                  <p className="text-xs text-amber-700">Temporarily simulate another role to test permissions and views.</p>
-                </div>
+        <div className="space-y-6">
+          <div className="bg-white p-6 rounded-2xl border border-outline-variant/20 shadow-sm flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-primary/10 rounded-xl text-primary">
+                <Settings size={28} />
               </div>
-              <div className="flex flex-wrap gap-2">
-                <button 
-                  onClick={() => handleRoleOverride(null)}
-                  className={cn(
-                    "px-4 py-2 rounded-lg text-xs font-bold transition-all",
-                    !profile.roleOverride ? "bg-amber-600 text-white shadow-md" : "bg-white text-amber-700 border border-amber-200 hover:bg-amber-100"
-                  )}
-                >
-                  Default (Admin)
-                </button>
-                {['Cashier', 'Quality Controller', 'Supervisor', 'Manager', 'Director', 'Factory Clerk'].map(role => (
+              <div>
+                <h2 className="text-xl font-bold">System Configuration</h2>
+                <p className="text-sm text-on-surface-variant">Global parameters and branding</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2 space-y-6">
+              {/* Role Simulation for Admins */}
+              {isActualAdmin && (
+                <div className="bg-amber-50 p-6 rounded-2xl border border-amber-200">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="p-2 bg-amber-100 rounded-lg text-amber-700">
+                      <UserCog size={20} />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-amber-900">Role Simulation</h3>
+                      <p className="text-xs text-amber-700">Test how the system looks for different roles</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button 
+                      onClick={() => handleRoleOverride(null)}
+                      className={cn(
+                        "px-4 py-2 rounded-lg text-xs font-bold transition-all",
+                        !profile.roleOverride ? "bg-amber-700 text-white shadow-md" : "bg-white text-amber-700 border border-amber-200"
+                      )}
+                    >
+                      Default
+                    </button>
+                    {['Cashier', 'Quality Controller', 'Supervisor', 'Manager', 'Director', 'Factory Clerk'].map(role => (
+                      <button 
+                        key={role}
+                        onClick={() => handleRoleOverride(role)}
+                        className={cn(
+                          "px-4 py-2 rounded-lg text-xs font-bold transition-all",
+                          profile.roleOverride === role ? "bg-amber-700 text-white shadow-md" : "bg-white text-amber-700 border border-amber-200"
+                        )}
+                      >
+                        {role}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <form onSubmit={handleSaveSettings} className="bg-white rounded-2xl border border-outline-variant/20 shadow-sm p-8 space-y-8">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <label className="text-xs font-black uppercase tracking-widest text-on-surface-variant">System Name</label>
+                    <input 
+                      type="text" 
+                      value={settings.systemName} 
+                      onChange={e => setSettings({...settings, systemName: e.target.value})}
+                      className="w-full px-4 py-3 bg-surface-container-low border-none rounded-xl text-sm font-bold"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-black uppercase tracking-widest text-on-surface-variant">Company Name</label>
+                    <input 
+                      type="text" 
+                      value={settings.companyName} 
+                      onChange={e => setSettings({...settings, companyName: e.target.value})}
+                      className="w-full px-4 py-3 bg-surface-container-low border-none rounded-xl text-sm font-bold"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-black uppercase tracking-widest text-on-surface-variant">Support Email</label>
+                    <input 
+                      type="email" 
+                      value={settings.supportEmail} 
+                      onChange={e => setSettings({...settings, supportEmail: e.target.value})}
+                      className="w-full px-4 py-3 bg-surface-container-low border-none rounded-xl text-sm font-bold"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-black uppercase tracking-widest text-on-surface-variant">Milk Price (TSh)</label>
+                    <input 
+                      type="number" 
+                      value={settings.milkPrice} 
+                      onChange={e => setSettings({...settings, milkPrice: Number(e.target.value)})}
+                      className="w-full px-4 py-3 bg-surface-container-low border-none rounded-xl text-sm font-bold"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <h3 className="text-xs font-black uppercase tracking-widest text-on-surface-variant">Appearance & Branding</h3>
+                  <div className="grid grid-cols-1 gap-4">
+                    <div className="p-4 bg-surface-container-low rounded-xl border border-outline-variant/10">
+                      <div className="flex justify-between items-center mb-4">
+                        <span className="text-xs font-bold">Standard Logo (Red)</span>
+                        <input type="file" accept="image/*" onChange={e => handleFileUpload(e, 'logoRed')} className="text-xs" />
+                      </div>
+                      {settings.logoRed && <img src={settings.logoRed} className="h-10 object-contain" />}
+                    </div>
+                    <div className="p-4 bg-red-600 rounded-xl">
+                      <div className="flex justify-between items-center mb-4 text-white">
+                        <span className="text-xs font-bold">Reverse Logo (White)</span>
+                        <input type="file" accept="image/*" onChange={e => handleFileUpload(e, 'logoWhite')} className="text-xs" />
+                      </div>
+                      {settings.logoWhite && <img src={settings.logoWhite} className="h-10 object-contain" />}
+                    </div>
+                    <div className="p-4 bg-surface-container-low rounded-xl border border-outline-variant/10">
+                      <div className="flex justify-between items-center mb-4">
+                        <span className="text-xs font-bold">Login Background Image</span>
+                        <input type="file" accept="image/*" onChange={e => handleFileUpload(e, 'loginBgUrl')} className="text-xs" />
+                      </div>
+                      {settings.loginBgUrl && <img src={settings.loginBgUrl} className="h-20 w-full object-cover rounded-lg" />}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-6 border-t border-outline-variant/10">
                   <button 
-                    key={role}
-                    onClick={() => handleRoleOverride(role)}
-                    className={cn(
-                      "px-4 py-2 rounded-lg text-xs font-bold transition-all",
-                      profile.roleOverride === role ? "bg-amber-600 text-white shadow-md" : "bg-white text-amber-700 border border-amber-200 hover:bg-amber-100"
-                    )}
+                    type="submit" 
+                    disabled={isSavingSettings}
+                    className="w-full bg-primary text-white font-black py-4 rounded-2xl shadow-xl hover:shadow-primary/30 transition-all disabled:opacity-50"
                   >
-                    Simulate {role}
+                    {isSavingSettings ? 'Saving...' : 'Save Configuration'}
                   </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="max-w-2xl bg-white rounded-xl border border-outline-variant/20 shadow-sm p-8">
-          <div className="flex items-center gap-3 mb-8">
-            <div className="p-3 bg-primary/10 rounded-xl text-primary">
-              <Settings size={24} />
-            </div>
-            <div>
-              <h2 className="text-xl font-bold">System Configuration</h2>
-              <p className="text-sm text-on-surface-variant">Manage global parameters for the entire system</p>
-            </div>
-          </div>
-
-          <form onSubmit={handleSaveSettings} className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-2">
-                <label className="text-sm font-bold text-on-surface">System Name</label>
-                <input 
-                  type="text" 
-                  value={settings.systemName} 
-                  onChange={e => setSettings({...settings, systemName: e.target.value})}
-                  className="w-full px-4 py-3 bg-surface-container-low border-none rounded-xl text-sm font-medium focus:ring-2 focus:ring-primary/20"
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-bold text-on-surface">Company Name</label>
-                <input 
-                  type="text" 
-                  value={settings.companyName} 
-                  onChange={e => setSettings({...settings, companyName: e.target.value})}
-                  className="w-full px-4 py-3 bg-surface-container-low border-none rounded-xl text-sm font-medium focus:ring-2 focus:ring-primary/20"
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-bold text-on-surface">Support Email</label>
-                <input 
-                  type="email" 
-                  value={settings.supportEmail} 
-                  onChange={e => setSettings({...settings, supportEmail: e.target.value})}
-                  className="w-full px-4 py-3 bg-surface-container-low border-none rounded-xl text-sm font-medium focus:ring-2 focus:ring-primary/20"
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-bold text-on-surface">
-                  Global Milk Price (TSh per Litre)
-                </label>
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant font-bold">TSh</span>
-                  <input 
-                    type="number" 
-                    value={settings.milkPrice} 
-                    onChange={e => setSettings({...settings, milkPrice: Number(e.target.value)})}
-                    className="w-full pl-14 pr-4 py-3 bg-surface-container-low border-none rounded-xl text-sm font-bold focus:ring-2 focus:ring-primary/20"
-                    required
-                  />
                 </div>
-              </div>
-              <div className="space-y-2 md:col-span-2">
-                <label className="text-sm font-bold text-on-surface">Logo & Favicon Settings</label>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  <div className="p-4 bg-surface-container-low rounded-xl border border-outline-variant/10 space-y-3">
-                    <p className="text-xs font-bold uppercase opacity-60">Red Logo (for white areas)</p>
-                    <input 
-                      type="file" 
-                      accept=".png,.svg" 
-                      onChange={e => handleFileUpload(e, 'logoRed')}
-                      className="text-xs w-full"
-                    />
-                    {settings.logoRed && (
-                      <div className="mt-2 p-2 bg-white rounded-lg border border-outline-variant/10 inline-block shadow-sm">
-                        <img src={settings.logoRed} alt="Red Logo Preview" className="h-10 w-auto object-contain" />
-                      </div>
-                    )}
-                  </div>
-                  <div className="p-4 bg-red-600 rounded-xl border border-red-700 space-y-3">
-                    <p className="text-xs font-bold uppercase text-white/60">White Logo (for red areas)</p>
-                    <input 
-                      type="file" 
-                      accept=".png,.svg" 
-                      onChange={e => handleFileUpload(e, 'logoWhite')}
-                      className="text-xs w-full text-white"
-                    />
-                    {settings.logoWhite && (
-                      <div className="mt-2 p-2 bg-white/10 rounded-lg border border-white/10 inline-block shadow-sm">
-                        <img src={settings.logoWhite} alt="White Logo Preview" className="h-10 w-auto object-contain" />
-                      </div>
-                    )}
-                  </div>
-                  <div className="p-4 bg-surface-container-low rounded-xl border border-outline-variant/10 space-y-3">
-                    <p className="text-xs font-bold uppercase opacity-60">Favicon (Browser Icon)</p>
-                    <input 
-                      type="file" 
-                      accept=".png,.ico,.svg" 
-                      onChange={e => handleFileUpload(e, 'favicon')}
-                      className="text-xs w-full"
-                    />
-                    {settings.favicon && (
-                      <div className="mt-2 p-2 bg-white rounded-lg border border-outline-variant/10 inline-block shadow-sm">
-                        <img src={settings.favicon} alt="Favicon Preview" className="h-6 w-6 object-contain" />
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-              <div className="space-y-2 md:col-span-2">
-                <label className="text-sm font-bold text-on-surface">Fallback Logo URL</label>
-                <input 
-                  type="text" 
-                  value={settings.logoUrl || ''} 
-                  onChange={e => setSettings({...settings, logoUrl: e.target.value})}
-                  className="w-full px-4 py-3 bg-surface-container-low border-none rounded-xl text-sm font-medium focus:ring-2 focus:ring-primary/20"
-                  placeholder="https://example.com/logo.png"
-                />
-              </div>
-            </div>
-
-            <p className="text-xs text-on-surface-variant italic">These settings will be applied globally across the entire system. Changes are immediate after saving.</p>
-
-            <div className="pt-4">
-              <button 
-                type="submit" 
-                disabled={isSavingSettings}
-                className="w-full bg-primary text-white font-bold py-4 rounded-xl shadow-lg hover:shadow-primary/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                {isSavingSettings ? 'Saving...' : 'Save Configuration'}
-              </button>
-            </div>
-          </form>
-          </div>
-
-          {/* Firestore Rules Editor */}
-          <div className="bg-white rounded-xl border border-outline-variant/20 shadow-sm p-8">
-            <div className="flex items-center gap-3 mb-8">
-              <div className="p-3 bg-amber-100 rounded-xl text-amber-700">
-                <ShieldCheck size={24} />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold">Firestore Security Rules</h2>
-                <p className="text-sm text-on-surface-variant">View and edit database security rules (Reference Only)</p>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div className="bg-surface-container-low p-4 rounded-xl border border-outline-variant/10">
-                <div className="flex items-center gap-2 mb-2 text-amber-700">
-                  <AlertTriangle size={16} />
-                  <p className="text-xs font-bold uppercase tracking-wider">Warning</p>
-                </div>
-                <p className="text-xs text-on-surface-variant">
-                  Changes saved here are stored in the database for reference. In a production environment, 
-                  actual rule deployment must be done via the Firebase CLI or Console.
-                </p>
-              </div>
-
-              <textarea 
-                value={firestoreRules}
-                onChange={e => setFirestoreRules(e.target.value)}
-                className="w-full h-[400px] font-mono text-xs p-4 bg-surface-container-low border-none rounded-xl focus:ring-2 focus:ring-primary/20"
-                placeholder="service cloud.firestore { ... }"
-              />
-
-              <div className="pt-4">
-                <button 
-                  onClick={handleSaveRules}
-                  disabled={isSavingRules}
-                  className="w-full bg-amber-600 text-white font-bold py-4 rounded-xl shadow-lg hover:shadow-amber-200 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  {isSavingRules ? 'Saving Rules...' : 'Save Rules to Database'}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Role Permissions Management */}
-          <div className="bg-white rounded-xl border border-outline-variant/20 shadow-sm p-8">
-            <div className="flex items-center gap-3 mb-8">
-              <div className="p-3 bg-indigo-100 rounded-xl text-indigo-700">
-                <Shield size={24} />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold">Role Permissions</h2>
-                <p className="text-sm text-on-surface-variant">Configure granular access for each user role</p>
-              </div>
+              </form>
             </div>
 
             <div className="space-y-6">
-              <div className="flex items-center gap-4 p-4 bg-surface-container-low rounded-xl">
-                <label className="text-sm font-bold whitespace-nowrap">Select Role to Configure:</label>
+              {/* Role Permissions Section */}
+              <div className="bg-white rounded-2xl border border-outline-variant/20 shadow-sm p-6 space-y-6">
+                <div className="flex items-center gap-2 text-indigo-600">
+                  <Shield size={20} />
+                  <h3 className="font-bold">Role Access</h3>
+                </div>
                 <select 
                   value={selectedRoleForPerms} 
                   onChange={e => setSelectedRoleForPerms(e.target.value)}
-                  className="flex-1 bg-white border border-outline-variant/30 rounded-lg p-2 text-sm font-bold"
+                  className="w-full bg-surface-container-low border-none rounded-xl p-3 text-sm font-bold"
                 >
                   {roles.map(role => <option key={role} value={role}>{role}</option>)}
                 </select>
-              </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                {/* Page Access */}
-                <div className="space-y-4">
-                  <h3 className="text-sm font-black uppercase tracking-widest text-on-surface-variant flex items-center gap-2">
-                    <FileText size={16} /> Page Access
-                  </h3>
-                  <div className="grid grid-cols-1 gap-2">
-                    {pages.map(page => (
-                      <label key={page} className="flex items-center justify-between p-3 rounded-lg border border-outline-variant/10 hover:bg-surface-container-lowest cursor-pointer transition-colors">
-                        <span className="text-sm font-medium">{page}</span>
-                        <input 
-                          type="checkbox" 
-                          checked={!!rolePermissions[selectedRoleForPerms]?.pages?.[page]}
-                          onChange={() => togglePermission(selectedRoleForPerms, 'pages', page)}
-                          className="w-5 h-5 rounded text-primary focus:ring-primary"
-                        />
-                      </label>
-                    ))}
-                  </div>
+                <div className="max-h-[500px] overflow-y-auto space-y-4 pr-2 custom-scrollbar-light">
+                  <h4 className="text-[10px] font-black uppercase text-on-surface-variant tracking-widest">Page Visibility</h4>
+                  {pages.map(page => (
+                    <label key={page} className="flex items-center justify-between p-3 bg-surface-container-low rounded-xl cursor-pointer">
+                      <span className="text-xs font-bold">{page}</span>
+                      <input 
+                        type="checkbox" 
+                        checked={!!rolePermissions[selectedRoleForPerms]?.pages?.[page]}
+                        onChange={() => togglePermission(selectedRoleForPerms, 'pages', page)}
+                        className="rounded text-indigo-600"
+                      />
+                    </label>
+                  ))}
+
+                  <h4 className="text-[10px] font-black uppercase text-on-surface-variant tracking-widest mt-6">Dashboard Functions</h4>
+                  {widgets.map(widget => (
+                    <label key={widget} className="flex items-center justify-between p-3 bg-surface-container-low rounded-xl cursor-pointer">
+                      <span className="text-xs font-bold">{widget}</span>
+                      <input 
+                        type="checkbox" 
+                        checked={!!rolePermissions[selectedRoleForPerms]?.dashboard?.[widget]}
+                        onChange={() => togglePermission(selectedRoleForPerms, 'dashboard', widget)}
+                        className="rounded text-indigo-600"
+                      />
+                    </label>
+                  ))}
                 </div>
 
-                {/* Dashboard Widgets */}
-                <div className="space-y-4">
-                  <h3 className="text-sm font-black uppercase tracking-widest text-on-surface-variant flex items-center gap-2">
-                    <BarChart3 size={16} /> Dashboard Widgets
-                  </h3>
-                  <div className="grid grid-cols-1 gap-2">
-                    {widgets.map(widget => (
-                      <label key={widget} className="flex items-center justify-between p-3 rounded-lg border border-outline-variant/10 hover:bg-surface-container-lowest cursor-pointer transition-colors">
-                        <span className="text-sm font-medium">{widget}</span>
-                        <input 
-                          type="checkbox" 
-                          checked={!!rolePermissions[selectedRoleForPerms]?.dashboard?.[widget]}
-                          onChange={() => togglePermission(selectedRoleForPerms, 'dashboard', widget)}
-                          className="w-5 h-5 rounded text-primary focus:ring-primary"
-                        />
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div className="pt-6 border-t border-outline-variant/10">
                 <button 
                   onClick={handleSavePermissions}
                   disabled={isSavingPerms}
-                  className="w-full bg-indigo-600 text-white font-bold py-4 rounded-xl shadow-lg hover:shadow-indigo-200 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl shadow-lg disabled:opacity-50"
                 >
-                  {isSavingPerms ? 'Saving...' : 'Save Role Permissions'}
+                  Save Access
                 </button>
               </div>
             </div>

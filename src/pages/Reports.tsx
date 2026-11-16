@@ -44,7 +44,7 @@ export default function Reports() {
           path: '/reports/supplier-performance', 
           icon: TrendingUp, 
           description: 'Monthly performance metrics per supplier',
-          roles: ['Super User', 'Admin', 'Supervisor', 'Manager', 'Director'] 
+          roles: ['Super User', 'Admin', 'Supervisor', 'Manager', 'Director', 'Cashier', 'Quality Controller'] 
         }
       ]
     },
@@ -80,24 +80,24 @@ export default function Reports() {
   const hasAccess = (roles: string[]) => profile && roles.includes(profile.role);
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-10 pb-12">
       <div>
-        <h1 className="text-2xl font-bold text-on-surface">Reports Center</h1>
-        <p className="text-on-surface-variant text-sm">Central hub for all system reports and analytics</p>
+        <h1 className="text-4xl font-black text-on-surface tracking-tighter">Reports Center</h1>
+        <p className="text-on-surface-variant font-medium mt-1">Central hub for all system reports and analytics</p>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-10">
         {reportGroups.map((group, groupIdx) => (
-          <div key={groupIdx} className="space-y-4">
-            <div className="flex items-center gap-3 px-2">
-              <div className="w-1 h-6 bg-primary rounded-full"></div>
+          <div key={groupIdx} className="space-y-6">
+            <div className="flex items-center gap-4 px-2">
+              <div className="w-1.5 h-10 bg-primary rounded-full"></div>
               <div>
-                <h2 className="font-bold text-on-surface">{group.title}</h2>
-                <p className="text-xs text-on-surface-variant">{group.description}</p>
+                <h2 className="text-2xl font-black text-on-surface tracking-tight">{group.title}</h2>
+                <p className="text-sm font-medium text-on-surface-variant">{group.description}</p>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-1 gap-4">
               {group.reports.filter(r => hasAccess(r.roles)).map((report, idx) => (
                 <button
                   key={idx}

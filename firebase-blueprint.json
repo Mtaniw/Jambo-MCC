@@ -72,7 +72,11 @@
         "quantity": { "type": "number" },
         "amountPerUnit": { "type": "number" },
         "total": { "type": "number" },
-        "approvedBy": { "type": "string" }
+        "approvedBy": { "type": "string" },
+        "receiptFileId": { "type": "string" },
+        "receiptFileName": { "type": "string" },
+        "receiptFileType": { "type": "string" },
+        "receiptFileSize": { "type": "number" }
       },
       "required": ["mccId", "date", "description", "quantity", "amountPerUnit", "total", "approvedBy"]
     },
@@ -90,7 +94,11 @@
         "amountReceived": { "type": "number" },
         "amountUsed": { "type": "number" },
         "balance": { "type": "number" },
-        "notes": { "type": "string" }
+        "notes": { "type": "string" },
+        "receiptFileId": { "type": "string" },
+        "receiptFileName": { "type": "string" },
+        "receiptFileType": { "type": "string" },
+        "receiptFileSize": { "type": "number" }
       },
       "required": ["mccId", "sender", "purpose", "date", "mode", "amountReceived"]
     },
@@ -197,6 +205,32 @@
         "status": { "type": "string", "enum": ["online", "offline"] }
       },
       "required": ["uid", "username", "lastSeen", "status"]
+    },
+    "Receipt": {
+      "title": "Receipt",
+      "description": "Uploaded PDF or image receipt attachment for expenses or funds received",
+      "type": "object",
+      "properties": {
+        "fileName": { "type": "string", "maxLength": 255 },
+        "mimeType": { "type": "string", "maxLength": 100 },
+        "size": { "type": "number" },
+        "chunkCount": { "type": "number" },
+        "data": { "type": "string" },
+        "parentCollection": { "type": "string", "enum": ["expenses", "money_received"] },
+        "uploadedBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["fileName", "mimeType", "size", "chunkCount", "parentCollection", "createdAt"]
+    },
+    "ReceiptChunk": {
+      "title": "ReceiptChunk",
+      "description": "Chunked base64 segment for large receipt attachments",
+      "type": "object",
+      "properties": {
+        "index": { "type": "number" },
+        "data": { "type": "string" }
+      },
+      "required": ["index", "data"]
     }
   },
   "firestore": {
@@ -243,6 +277,14 @@
     "/drivers/{driverId}": {
       "schema": "Driver",
       "description": "Collection of milk tanker drivers"
+    },
+    "/receipts/{receiptId}": {
+      "schema": "Receipt",
+      "description": "Uploaded PDF or image receipt attachments"
+    },
+    "/receipts/{receiptId}/chunks/{chunkId}": {
+      "schema": "ReceiptChunk",
+      "description": "Chunked segments for large receipt attachments"
     },
     "presence": {
       "schema": { "$ref": "presence" },

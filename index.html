@@ -4,6 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Jambo MCC Management System</title>
+    <script>
+      window.addEventListener('unhandledrejection', function (event) {
+        var reason = event && event.reason;
+        var msg = typeof reason === 'string' ? reason : (reason && reason.message) || '';
+        if (
+          msg.indexOf('WebSocket closed without opened') !== -1 ||
+          msg.indexOf('[vite] failed to connect to websocket') !== -1
+        ) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        }
+      }, true);
+    </script>
   </head>
   <body>
     <div id="root"></div>

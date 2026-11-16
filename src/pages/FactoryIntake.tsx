@@ -4,12 +4,13 @@ import { db } from '../firebase';
 import { useAuth } from '../hooks/useAuth';
 import { handleFirestoreError, OperationType } from '../lib/errorHandlers';
 import { Truck, CheckCircle2, AlertCircle, Save, Search, QrCode, X, Beaker, ChevronDown, ChevronUp, Download, FileSpreadsheet, Printer, Share2, Trash2, Calendar } from 'lucide-react';
-import { cn, formatNumber } from '../lib/utils';
+import { cn, formatNumber, parseDecimal } from '../lib/utils';
 import { format, startOfMonth } from 'date-fns';
 import { safeFormat, getTanzaniaTodayStr, getTanzaniaDate } from '../lib/dateUtils';
 import { DateInput } from '../components/DateInput';
 import { RESAZURIN_SCALE, getResazurinGrade } from '../lib/qualityConstants';
 import { ResazurinBadge } from '../components/ResazurinBadge';
+import { Modal } from '../components/Modal';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
@@ -31,8 +32,9 @@ export default function FactoryIntake() {
   const [startDate, setStartDate] = useState(format(startOfMonth(getTanzaniaDate()), 'yyyy-MM-dd'));
   const [endDate, setEndDate] = useState(getTanzaniaTodayStr());
 
-  const canWrite = profile && (profile.role === 'Admin' || !['Supervisor', 'Manager', 'Director'].includes(effectiveRole as string));
-  const isAdmin = profile && ['Admin', 'Super User'].includes(effectiveRole as string);
+  const isActualAdmin = profile && ['Admin', 'Super User'].includes(profile.role);
+  const isAdmin = isActualAdmin || ['Admin', 'Super User'].includes(effectiveRole as string);
+  const canWrite = isActualAdmin || (profile && !['Supervisor', 'Manager', 'Director'].includes(effectiveRole as string));
 
   const [intakeData, setIntakeData] = useState({
     qtyReceived: '',
@@ -89,19 +91,19 @@ export default function FactoryIntake() {
 
   const handleSave = async (id: string, litresLoaded: number) => {
     const docRef = doc(db, 'truck_qa', id);
-    const received = Number(intakeData.qtyReceived);
+    const received = parseDecimal(intakeData.qtyReceived);
     await updateDoc(docRef, {
       qtyReceived: received,
-      qtyRejected: Number(intakeData.qtyRejected),
+      qtyRejected: parseDecimal(intakeData.qtyRejected),
       qtyDifference: received - litresLoaded,
       factoryResazurin: intakeData.resazurin,
-      factoryTemp: Number(intakeData.temp),
-      factoryPh: Number(intakeData.ph),
+      factoryTemp: parseDecimal(intakeData.temp),
+      factoryPh: parseDecimal(intakeData.ph),
       factoryAlcoholTest: intakeData.alcoholTest,
       factoryRemarks: intakeData.factoryRemarks,
       factoryStatus: intakeData.status,
       receivedAt: intakeData.receivedAt || new Date().toISOString(),
-      receivedBy: profile?.fullName
+      receivedBy: profile?.fullName || profile?.email || 'System'
     });
     setEditingId(null);
   };
@@ -122,20 +124,22 @@ export default function FactoryIntake() {
     doc.setFontSize(11);
     doc.text(`Generated on: ${format(new Date(), 'dd/MM/yyyy HH:mm')}`, 14, 30);
 
-    const tableData = filteredRecords.map(rec => [
+    const tableData = filteredRecords.map((rec, index) => [
+      index + 1,
       safeFormat(rec.date, 'dd/MM/yyyy'),
+      rec.receivedAt ? safeFormat(rec.receivedAt, 'dd/MM/yyyy') : '---',
       mccs.find(m => m.id === rec.mccId)?.name || 'Unknown',
       rec.truckReg,
       rec.driverName,
-      `${formatNumber(rec.litresLoaded, 2)} L`,
-      `${formatNumber(rec.qtyReceived || 0, 2)} L`,
-      `${(Number(rec.qtyReceived || 0) - Number(rec.litresLoaded)) > 0 ? '+' : ''}${formatNumber((Number(rec.qtyReceived || 0) - Number(rec.litresLoaded)), 2)} L`,
+      `${formatNumber(rec.litresLoaded, 2, true, true)} L`,
+      `${formatNumber(rec.qtyReceived || 0, 2, true, true)} L`,
+      `${(Number(rec.qtyReceived || 0) - Number(rec.litresLoaded)) > 0 ? '+' : ''}${formatNumber((Number(rec.qtyReceived || 0) - Number(rec.litresLoaded)), 2, true, true)} L`,
       rec.factoryStatus || 'Pending'
     ]);
 
     (doc as any).autoTable({
       startY: 40,
-      head: [['Date', 'MCC', 'Truck', 'Driver', 'Sent', 'Received', 'Diff', 'Status']],
+      head: [['#', 'Sent Date', 'Received Date', 'MCC', 'Truck', 'Driver', 'Sent', 'Received', 'Diff', 'Status']],
       body: tableData,
       theme: 'grid',
       headStyles: { fillColor: [0, 102, 204] }
@@ -145,8 +149,10 @@ export default function FactoryIntake() {
   };
 
   const exportToExcel = () => {
-    const data = filteredRecords.map(rec => ({
-      Date: safeFormat(rec.date, 'dd/MM/yyyy'),
+    const data = filteredRecords.map((rec, index) => ({
+      'Sno#': index + 1,
+      'Sent Date': safeFormat(rec.date, 'dd/MM/yyyy'),
+      'Received Date': rec.receivedAt ? safeFormat(rec.receivedAt, 'dd/MM/yyyy') : '---',
       MCC: mccs.find(m => m.id === rec.mccId)?.name || 'Unknown',
       Truck: rec.truckReg,
       Driver: rec.driverName,
@@ -172,19 +178,21 @@ export default function FactoryIntake() {
         // Generate PDF first to share it
         const doc = new jsPDF();
         doc.text('Factory Milk Intake Report', 14, 22);
-        const tableData = filteredRecords.map(rec => [
+        const tableData = filteredRecords.map((rec, index) => [
+          index + 1,
           safeFormat(rec.date, 'dd/MM/yyyy'),
+          rec.receivedAt ? safeFormat(rec.receivedAt, 'dd/MM/yyyy') : '---',
           mccs.find(m => m.id === rec.mccId)?.name || 'Unknown',
           rec.truckReg,
           rec.driverName,
-          `${formatNumber(rec.litresLoaded, 2)} L`,
-          `${formatNumber(rec.qtyReceived || 0, 2)} L`,
-          `${(Number(rec.qtyReceived || 0) - Number(rec.litresLoaded)) > 0 ? '+' : ''}${formatNumber((Number(rec.qtyReceived || 0) - Number(rec.litresLoaded)), 2)} L`,
+          `${formatNumber(rec.litresLoaded, 2, true, true)} L`,
+          `${formatNumber(rec.qtyReceived || 0, 2, true, true)} L`,
+          `${(Number(rec.qtyReceived || 0) - Number(rec.litresLoaded)) > 0 ? '+' : ''}${formatNumber((Number(rec.qtyReceived || 0) - Number(rec.litresLoaded)), 2, true, true)} L`,
           rec.factoryStatus || 'Pending'
         ]);
         (doc as any).autoTable({
           startY: 30,
-          head: [['Date', 'MCC', 'Truck', 'Driver', 'Sent', 'Received', 'Diff', 'Status']],
+          head: [['#', 'Sent Date', 'Received Date', 'MCC', 'Truck', 'Driver', 'Sent', 'Received', 'Diff', 'Status']],
           body: tableData,
         });
         const pdfBlob = doc.output('blob');
@@ -265,100 +273,97 @@ export default function FactoryIntake() {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-bold text-on-surface">Goods Received</h1>
-          <p className="text-on-surface-variant text-sm">Record liters received from MCC tankers (Factory Intake)</p>
+          <h1 className="text-2xl md:text-3xl font-black tracking-tight text-on-surface">Goods Received</h1>
+          <p className="text-on-surface-variant font-medium text-xs">Record liters received from MCC tankers (Factory Intake)</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-1.5">
           <button 
             onClick={exportToPDF}
-            className="bg-white border border-outline-variant/30 text-on-surface px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-surface-container-low transition-colors"
+            className="bg-white border border-outline-variant/30 text-on-surface px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 hover:bg-surface-container-low transition-colors text-xs"
           >
-            <Download size={18} /> PDF
+            <Download size={16} /> PDF
           </button>
           <button 
             onClick={exportToExcel}
-            className="bg-white border border-outline-variant/30 text-on-surface px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-surface-container-low transition-colors"
+            className="bg-white border border-outline-variant/30 text-on-surface px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 hover:bg-surface-container-low transition-colors text-xs"
           >
-            <FileSpreadsheet size={18} /> Excel
+            <FileSpreadsheet size={16} /> Excel
           </button>
           <button 
             onClick={() => window.print()}
-            className="bg-white border border-outline-variant/30 text-on-surface px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-surface-container-low transition-colors"
+            className="bg-white border border-outline-variant/30 text-on-surface px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 hover:bg-surface-container-low transition-colors text-xs"
           >
-            <Printer size={18} /> Print
+            <Printer size={16} /> Print
           </button>
           <button 
             onClick={handleShare}
-            className="bg-primary text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 shadow-lg hover:shadow-primary/20 transition-all"
+            className="bg-primary text-white px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 shadow-lg hover:shadow-primary/20 transition-all text-xs"
           >
-            <Share2 size={18} /> Share
+            <Share2 size={16} /> Share
           </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white p-6 rounded-xl border border-outline-variant/20 shadow-sm relative overflow-hidden group hover:shadow-md transition-all">
-          <div className="absolute top-0 right-0 w-24 h-24 bg-primary/5 rounded-full -mr-8 -mt-8 transition-transform group-hover:scale-110"></div>
-          <div className="relative z-10 flex flex-col h-full">
-            <div className="flex items-center gap-2 text-primary mb-2">
-              <Truck size={18} />
-              <span className="text-[10px] font-bold uppercase tracking-widest">Total Dispatched</span>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="bg-white p-4 rounded-2xl border border-outline-variant/20 shadow-sm relative overflow-hidden group hover:shadow-md transition-all">
+          <div className="absolute top-0 right-0 w-16 h-16 bg-primary/5 rounded-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
+          <div className="relative z-10 flex flex-col">
+            <div className="flex items-center gap-1.5 text-primary mb-1">
+              <div className="p-1.5 bg-primary/10 rounded-lg">
+                <Truck size={16} />
+              </div>
+              <span className="text-[9px] font-black uppercase tracking-widest leading-none">Total Dispatched</span>
             </div>
-            <div className="mt-auto">
-              <h2 className="text-3xl font-black text-on-surface">{formatNumber(stats.totalLoaded, 2)} L</h2>
-              <p className="text-[10px] text-on-surface-variant mt-1 font-medium italic">Estimated volume sent from MCCs</p>
-            </div>
+             <h2 className="text-2xl font-black text-on-surface tracking-tight">{formatNumber(stats.totalLoaded, 2, true, true)} L</h2>
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-xl border border-outline-variant/20 shadow-sm relative overflow-hidden group hover:shadow-md transition-all">
-          <div className="absolute top-0 right-0 w-24 h-24 bg-green-50 rounded-full -mr-8 -mt-8 transition-transform group-hover:scale-110"></div>
-          <div className="relative z-10 flex flex-col h-full">
-            <div className="flex items-center gap-2 text-green-600 mb-2">
-                <CheckCircle2 size={18} />
-                <span className="text-[10px] font-bold uppercase tracking-widest">Actual Received</span>
+        <div className="bg-white p-4 rounded-2xl border border-outline-variant/20 shadow-sm relative overflow-hidden group hover:shadow-md transition-all">
+          <div className="absolute top-0 right-0 w-16 h-16 bg-green-50 rounded-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
+          <div className="relative z-10 flex flex-col">
+            <div className="flex items-center gap-1.5 text-green-600 mb-1">
+              <div className="p-1.5 bg-green-100 rounded-lg">
+                <CheckCircle2 size={16} />
+              </div>
+              <span className="text-[9px] font-black uppercase tracking-widest leading-none">Actual Received</span>
             </div>
-            <div className="mt-auto">
-                <h2 className="text-3xl font-black text-on-surface">{formatNumber(stats.totalReceived, 2)} L</h2>
-                <p className="text-[10px] text-on-surface-variant mt-1 font-medium italic">Volume verified at factory intake</p>
-            </div>
+            <h2 className="text-2xl font-black text-on-surface tracking-tight">{formatNumber(stats.totalReceived, 2, true, true)} L</h2>
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-xl border border-outline-variant/20 shadow-sm relative overflow-hidden group hover:shadow-md transition-all">
+        <div className="bg-white p-4 rounded-2xl border border-outline-variant/20 shadow-sm relative overflow-hidden group hover:shadow-md transition-all">
           <div className={cn(
-            "absolute top-0 right-0 w-24 h-24 rounded-full -mr-8 -mt-8 transition-transform group-hover:scale-110",
+            "absolute top-0 right-0 w-16 h-16 rounded-full -mr-4 -mt-4 transition-transform group-hover:scale-110",
             stats.totalDiff >= 0 ? "bg-green-50" : "bg-red-50"
           )}></div>
-          <div className="relative z-10 flex flex-col h-full">
+          <div className="relative z-10 flex flex-col">
             <div className={cn(
-              "flex items-center gap-2 mb-2",
+              "flex items-center gap-1.5 mb-1",
               stats.totalDiff >= 0 ? "text-green-600" : "text-error"
             )}>
-                <AlertCircle size={18} />
-                <span className="text-[10px] font-bold uppercase tracking-widest">Total Difference</span>
+              <div className={cn("p-1.5 rounded-lg", stats.totalDiff >= 0 ? "bg-green-100" : "bg-red-100")}>
+                <AlertCircle size={16} />
+              </div>
+              <span className="text-[9px] font-black uppercase tracking-widest leading-none">Difference</span>
             </div>
-            <div className="mt-auto">
-                <h2 className={cn(
-                  "text-3xl font-black",
-                  stats.totalDiff >= 0 ? "text-green-600" : "text-error"
-                )}>
-                  {stats.totalDiff > 0 ? '+' : ''}{formatNumber(stats.totalDiff, 2)} L
-                </h2>
-                <p className="text-[10px] text-on-surface-variant mt-1 font-medium italic">Variance between sent and received</p>
-            </div>
+            <h2 className={cn(
+              "text-2xl font-black tracking-tight",
+              stats.totalDiff >= 0 ? "text-green-600" : "text-error"
+            )}>
+              {stats.totalDiff > 0 ? '+' : ''}{formatNumber(stats.totalDiff, 2, true, true)} L
+            </h2>
           </div>
         </div>
       </div>
 
       <div className="space-y-4">
-        <div className="bg-white p-4 rounded-xl border border-outline-variant/20 shadow-sm flex flex-wrap gap-4 items-end">
-          <div className="flex-1 min-w-[300px] space-y-1">
-            <label className="text-[10px] font-bold uppercase opacity-60">Search Records</label>
-            <div className="flex items-center gap-4 bg-surface-container-low px-3 h-10 rounded-lg">
-              <Search className="text-on-surface-variant" size={20} />
+        <div className="bg-white p-6 rounded-3xl border border-outline-variant/20 shadow-sm flex flex-wrap gap-4 items-end">
+          <div className="flex-1 min-w-[200px] space-y-1">
+            <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 mb-1.5 block tracking-widest">Search</label>
+            <div className="flex items-center gap-3 bg-surface-container-low px-3 h-9 rounded-lg">
+              <Search className="text-on-surface-variant" size={18} />
               <input 
-                placeholder="Search by Truck Reg or Driver..." 
+                placeholder="Truck Reg or Driver..." 
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
                 className="flex-1 bg-transparent border-none focus:ring-0 text-sm"
@@ -366,7 +371,7 @@ export default function FactoryIntake() {
             </div>
           </div>
           
-          <div className="w-40 space-y-1">
+          <div className="w-36 space-y-1">
             <DateInput 
               value={startDate}
               onChange={setStartDate}
@@ -374,7 +379,7 @@ export default function FactoryIntake() {
             />
           </div>
 
-          <div className="w-40 space-y-1">
+          <div className="w-36 space-y-1">
             <DateInput 
               value={endDate}
               onChange={setEndDate}
@@ -382,13 +387,13 @@ export default function FactoryIntake() {
             />
           </div>
 
-          <div className="w-48 space-y-1">
+          <div className="w-40 space-y-1">
             <label className="text-[10px] font-bold uppercase opacity-60">MCC Filter</label>
             <div className="flex items-center gap-2">
               <select 
                 value={mccFilter} 
                 onChange={e => setMccFilter(e.target.value)}
-                className="flex-1 bg-surface-container-low border-none rounded-lg text-sm font-bold h-10 px-3"
+                className="flex-1 bg-surface-container-low border-none rounded-lg text-sm font-bold h-9 px-3"
               >
                 <option value="all">All MCCs</option>
                 {mccs.map(mcc => <option key={mcc.id} value={mcc.id}>{mcc.name}</option>)}
@@ -396,11 +401,11 @@ export default function FactoryIntake() {
               <button 
                 onClick={() => setShowScanner(!showScanner)}
                 className={cn(
-                  "p-2 rounded-lg transition-colors h-10",
+                  "p-2 rounded-lg transition-colors h-9",
                   showScanner ? "bg-primary text-white" : "bg-surface-container-low text-primary hover:bg-primary/10"
                 )}
               >
-                {showScanner ? <X size={20} /> : <QrCode size={20} />}
+                {showScanner ? <X size={18} /> : <QrCode size={18} />}
               </button>
             </div>
           </div>
@@ -414,387 +419,359 @@ export default function FactoryIntake() {
         )}
       </div>
 
-      <div className="grid grid-cols-1 gap-4">
-        {paginatedRecords.map(rec => {
-          const isExpanded = expandedId === rec.id;
-          const isTempFail = rec.tempAtLoading > 6;
-          const isPhFail = rec.ph < 6.6 || rec.ph > 6.8;
-          const isAlcoholFail = rec.alcoholTest === 'Fail';
-          const isAntibioticFail = rec.antibiotic === 'Positive';
-          const isOverallFail = isTempFail || isPhFail || isAlcoholFail || isAntibioticFail;
+      <div className="bg-white rounded-3xl border border-outline-variant/20 shadow-sm overflow-x-auto custom-scrollbar-light">
+        <table className="w-full text-left text-[10px] min-w-[700px]">
+          <thead className="bg-surface-container-low font-black uppercase text-[8px] tracking-widest text-on-surface-variant">
+            <tr>
+              <th className="px-3 py-2.5 border-b border-outline-variant/10 w-8 text-center opacity-40">Sno#</th>
+              <th className="px-3 py-2.5 border-b border-outline-variant/10">Date</th>
+              <th className="px-3 py-2.5 border-b border-outline-variant/10">Truck</th>
+              <th className="px-3 py-2.5 border-b border-outline-variant/10">MCC</th>
+              <th className="px-3 py-2.5 border-b border-outline-variant/10 text-right">Sent (L)</th>
+              <th className="px-3 py-2.5 border-b border-outline-variant/10 text-right">Rec. (L)</th>
+              <th className="px-3 py-2.5 border-b border-outline-variant/10 text-right">Diff (L)</th>
+              <th className="px-3 py-2.5 border-b border-outline-variant/10 text-center">Status</th>
+              <th className="px-3 py-2.5 border-b border-outline-variant/10 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-outline-variant/10">
+            {paginatedRecords.map((rec, index) => {
+              const isExpanded = expandedId === rec.id;
+              // ... rest unchanged ...
+              const isTempFail = (rec.tempAtLoading || 0) > 6;
+              const parsedPhValue = Number(String(rec.ph || '').replace(',', '.'));
+              const isPhFail = isNaN(parsedPhValue) || parsedPhValue < 6.6 || parsedPhValue > 6.8;
+              const isAlcoholFail = rec.alcoholTest === 'Fail';
+              const isAntibioticFail = rec.antibiotic === 'Positive';
+              const isOverallFail = isTempFail || isPhFail || isAlcoholFail || isAntibioticFail;
 
-          return (
-            <div key={rec.id} className={cn(
-              "bg-white rounded-xl border transition-all duration-200 overflow-hidden",
-              isExpanded ? "border-primary shadow-md" : "border-outline-variant/20 shadow-sm"
-            )}>
-              <div 
-                className="p-4 flex flex-wrap items-center justify-between gap-4 border-b border-outline-variant/10 cursor-pointer hover:bg-surface-container-lowest"
-                onClick={() => setExpandedId(isExpanded ? null : rec.id)}
-              >
-                <div className="flex items-center gap-4">
-                  <div className="bg-primary/10 p-3 rounded-lg text-primary">
-                    <Truck size={24} />
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-lg">{rec.truckReg}</h3>
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-on-surface-variant">
-                      <span className="flex items-center gap-1 font-bold"><Calendar size={12} /> Sent: {safeFormat(rec.date, 'dd/MM/yyyy')}</span>
-                      <span>•</span>
-                      <span className="flex items-center gap-1 font-bold text-green-600"><Calendar size={12} /> Received: {rec.receivedAt ? safeFormat(rec.receivedAt, 'dd/MM/yyyy') : 'Pending'}</span>
-                      <span>•</span>
-                      <span>{rec.driverName}</span>
-                      <span>•</span>
-                      <span className={cn(
-                        "font-bold",
-                        rec.factoryStatus === 'Received' ? "text-green-600" : "text-amber-500"
-                      )}>{mccs.find(m => m.id === rec.mccId)?.name || 'Unknown MCC'}</span>
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-6">
-                  <div className="text-center">
-                    <p className="text-[10px] font-bold uppercase text-on-surface-variant">Dispatched</p>
-                    <p className="font-bold text-green-600">{formatNumber(rec.litresLoaded, 2)} L</p>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-[10px] font-bold uppercase text-on-surface-variant">Received</p>
-                    <p className="font-bold text-primary">{rec.qtyReceived ? `${formatNumber(rec.qtyReceived, 2)} L` : '---'}</p>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-[10px] font-bold uppercase text-on-surface-variant">Diff</p>
-                    <p className={cn(
-                      "font-bold",
+              return (
+                <tr 
+                  key={rec.id}
+                  className={cn(
+                    "hover:bg-primary/5 transition-colors cursor-pointer group whitespace-nowrap",
+                    expandedId === rec.id && "bg-primary/5"
+                  )}
+                  onClick={() => {
+                    const recToEdit = rec;
+                    setEditingId(rec.id);
+                    setExpandedId(rec.id);
+                    setIntakeData({
+                      qtyReceived: formatNumber(recToEdit.qtyReceived || recToEdit.litresLoaded, 2, true, true),
+                      qtyRejected: recToEdit.qtyRejected !== undefined && recToEdit.qtyRejected !== null ? formatNumber(recToEdit.qtyRejected, 2, true, true) : '0.00',
+                      resazurin: recToEdit.factoryResazurin || '6',
+                      temp: recToEdit.factoryTemp || '',
+                      ph: recToEdit.factoryPh || '',
+                      alcoholTest: recToEdit.factoryAlcoholTest || 'Pass',
+                      receivedAt: recToEdit.receivedAt ? recToEdit.receivedAt.split('T')[0] : getTanzaniaTodayStr(),
+                      factoryRemarks: recToEdit.factoryRemarks || '',
+                      status: recToEdit.factoryStatus || 'Received'
+                    });
+                  }}
+                >
+                  <td className="px-5 py-3 text-[11px] font-black text-on-surface-variant opacity-30 text-center">{(currentPage - 1) * pageSize + index + 1}</td>
+                    <td className="px-5 py-3 text-[10px] font-medium">
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[8px] uppercase font-black bg-primary/10 text-primary px-1 py-0.5 rounded leading-none w-fit">Dispached</span>
+                          <span className="font-bold">{safeFormat(rec.date, 'dd/MM/yyyy')}</span>
+                        </div>
+                        {rec.receivedAt && (
+                          <div className="flex items-center gap-1.5 text-green-700">
+                            <span className="text-[8px] uppercase font-black bg-green-100 px-1 py-0.5 rounded leading-none w-fit">Received</span>
+                            <span className="font-bold">{safeFormat(rec.receivedAt, 'dd/MM/yyyy')}</span>
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-5 py-3 text-xs font-black group-hover:text-primary transition-colors tracking-tight">{rec.truckReg}</td>
+                    <td className="px-5 py-3 text-[10px] font-black text-on-surface-variant uppercase tracking-wider">
+                      {mccs.find(m => m.id === rec.mccId)?.name || 'Unknown'}
+                    </td>
+                    <td className="px-5 py-3 text-xs font-black text-green-600 tracking-tight text-right">{formatNumber(rec.litresLoaded, 2, true, true)} L</td>
+                    <td className={cn(
+                      "px-5 py-3 text-xs font-black tracking-tight text-right",
+                      !rec.qtyReceived ? "text-on-surface/30" :
+                      Number(rec.qtyReceived) >= Number(rec.litresLoaded) ? "text-green-600" : "text-error"
+                    )}>
+                      {rec.qtyReceived ? `${formatNumber(rec.qtyReceived, 2, true, true)} L` : '---'}
+                    </td>
+                    <td className={cn(
+                      "px-5 py-3 text-xs font-black tracking-tight text-right",
                       !rec.qtyReceived ? "text-on-surface/30" :
                       (Number(rec.qtyReceived) - Number(rec.litresLoaded)) > 0 ? "text-green-600" : 
                       (Number(rec.qtyReceived) - Number(rec.litresLoaded)) < 0 ? "text-error" : "text-on-surface/30"
                     )}>
-                      {rec.qtyReceived ? `${(Number(rec.qtyReceived) - Number(rec.litresLoaded)) > 0 ? '+' : ''}${formatNumber(Number(rec.qtyReceived) - Number(rec.litresLoaded), 2)} L` : '---'}
-                    </p>
-                  </div>
-                  <div className="text-center hidden sm:block">
-                    <p className="text-[10px] font-bold uppercase text-on-surface-variant">Weight</p>
-                    <p className="font-bold">{formatNumber(rec.weightKg, 2)} KG</p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <div className={cn(
-                      "px-3 py-1 rounded-full text-[10px] font-bold uppercase",
-                      rec.factoryStatus === 'Received' ? "bg-green-100 text-green-700" : "bg-surface-container-high"
-                    )}>
-                      {rec.factoryStatus || 'In Transit'}
+                      {rec.qtyReceived ? `${(Number(rec.qtyReceived) - Number(rec.litresLoaded)) > 0 ? '+' : ''}${formatNumber(Number(rec.qtyReceived) - Number(rec.litresLoaded), 2, true, true)} L` : ''}
+                    </td>
+                    <td className="px-5 py-3 text-center">
+                      <span className={cn(
+                        "px-2 py-1 rounded-full text-[9px] font-black uppercase tracking-tight w-fit inline-flex items-center",
+                        rec.factoryStatus === 'Received' ? "bg-green-100 text-green-700" : 
+                        rec.factoryStatus === 'Rejected' ? "bg-red-100 text-red-700 font-black" : 
+                        "bg-primary text-white"
+                      )}>
+                        {rec.factoryStatus || 'In Transit'}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3 text-right">
+                      <div className="flex justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-all">
+                        {isActualAdmin && (
+                          <button 
+                            onClick={(e) => { e.stopPropagation(); handleDelete(rec.id); }}
+                            className="bg-error/10 text-error p-1.5 rounded-lg hover:bg-error/20 transition-all shadow-sm"
+                            title="Delete Record"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                        {(canWrite || isAdmin) && (
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const newEditingId = editingId === rec.id ? null : rec.id;
+                              setEditingId(newEditingId);
+                              if (newEditingId) {
+                                setExpandedId(rec.id); // FIX: Ensure row is expanded to show form
+                                setIntakeData({
+                                  qtyReceived: formatNumber(rec.qtyReceived || rec.litresLoaded, 2, true, true),
+                                  qtyRejected: rec.qtyRejected !== undefined && rec.qtyRejected !== null ? formatNumber(rec.qtyRejected, 2, true, true) : '0.00',
+                                  resazurin: rec.factoryResazurin || '6',
+                                  temp: rec.factoryTemp || '',
+                                  ph: rec.factoryPh || '',
+                                  alcoholTest: rec.factoryAlcoholTest || 'Pass',
+                                  receivedAt: rec.receivedAt ? rec.receivedAt.split('T')[0] : getTanzaniaTodayStr(),
+                                  factoryRemarks: rec.factoryRemarks || '',
+                                  status: rec.factoryStatus || 'Received'
+                                });
+                              }
+                            }}
+                            className={cn(
+                              "px-4 py-2 rounded-xl text-[11px] font-black transition-all whitespace-nowrap shadow-lg flex items-center gap-2 relative z-20",
+                              rec.factoryStatus === 'Received' 
+                                ? "bg-green-600 text-white hover:bg-green-700" 
+                                : "bg-primary text-white hover:shadow-primary/30 hover:scale-[1.05]"
+                            )}
+                          >
+                            {rec.factoryStatus === 'Received' ? <CheckCircle2 size={14} /> : <Truck size={14} />}
+                            {rec.factoryStatus === 'Received' ? 'Update Hub' : 'Record Intake'}
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {filteredRecords.length === 0 && (
+                <tr>
+                  <td colSpan={9} className="px-5 py-12 text-center">
+                    <div className="flex flex-col items-center gap-3 opacity-40">
+                      <Truck size={32} />
+                      <p className="text-xs font-bold">No truck dispatches found.</p>
                     </div>
-                    {isExpanded ? <ChevronUp size={20} className="text-on-surface-variant" /> : <ChevronDown size={20} className="text-on-surface-variant" />}
-                  </div>
-                </div>
-              </div>
-
-              {isExpanded && (
-                <div className="bg-surface-container-lowest border-b border-outline-variant/10 p-4 animate-in slide-in-from-top-2 duration-200">
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <div className="bg-white p-3 rounded-lg border border-outline-variant/10">
-                      <p className="text-[10px] font-bold uppercase text-on-surface-variant mb-1 flex items-center gap-1">
-                        <Beaker size={12} /> Temperature
-                      </p>
-                      <p className={cn("font-bold", isTempFail ? "text-error" : "text-green-600")}>
-                        {formatNumber(rec.tempAtLoading, 2)}°C
-                      </p>
-                      <p className="text-[10px] opacity-60">{isTempFail ? 'Above Limit (>6°C)' : 'Within Limit'}</p>
-                    </div>
-                    <div className="bg-white p-3 rounded-lg border border-outline-variant/10">
-                      <p className="text-[10px] font-bold uppercase text-on-surface-variant mb-1 flex items-center gap-1">
-                        <Beaker size={12} /> pH Level
-                      </p>
-                      <p className={cn("font-bold", isPhFail ? "text-error" : "text-green-600")}>
-                        {formatNumber(rec.ph, 2)}
-                      </p>
-                      <p className="text-[10px] opacity-60">{isPhFail ? 'Out of Range (6.6-6.8)' : 'Normal Range'}</p>
-                    </div>
-                    <div className="bg-white p-3 rounded-lg border border-outline-variant/10">
-                      <p className="text-[10px] font-bold uppercase text-on-surface-variant mb-1 flex items-center gap-1">
-                        <Beaker size={12} /> Alcohol Test
-                      </p>
-                      <p className={cn("font-bold", isAlcoholFail ? "text-error" : "text-green-600")}>
-                        {rec.alcoholTest}
-                      </p>
-                      <p className="text-[10px] opacity-60">{isAlcoholFail ? 'Failed Test' : 'Passed Test'}</p>
-                    </div>
-                    <div className="bg-white p-3 rounded-lg border border-outline-variant/10">
-                      <p className="text-[10px] font-bold uppercase text-on-surface-variant mb-1 flex items-center gap-1">
-                        <Beaker size={12} /> Resazurin (Sent)
-                      </p>
-                      <ResazurinBadge value={rec.resazurin} className="w-full justify-center" />
-                      <p className="text-[10px] opacity-60 mt-1">MCC Lab Result</p>
-                    </div>
-                    <div className="bg-white p-3 rounded-lg border border-outline-variant/10">
-                      <p className="text-[10px] font-bold uppercase text-on-surface-variant mb-1 flex items-center gap-1">
-                        <Beaker size={12} /> Resazurin (Factory)
-                      </p>
-                      <ResazurinBadge value={rec.factoryResazurin} className="w-full justify-center" />
-                      <p className="text-[10px] opacity-60 mt-1">Factory Lab Result</p>
-                    </div>
-                    <div className="bg-white p-3 rounded-lg border border-outline-variant/10">
-                      <p className="text-[10px] font-bold uppercase text-on-surface-variant mb-1 flex items-center gap-1">
-                        <Beaker size={12} /> Factory Temp
-                      </p>
-                      <p className={cn("font-bold", (rec.factoryTemp || 0) > 6 ? "text-error" : "text-green-600")}>
-                        {rec.factoryTemp ? `${formatNumber(rec.factoryTemp, 2)}°C` : 'N/A'}
-                      </p>
-                    </div>
-                    <div className="bg-white p-3 rounded-lg border border-outline-variant/10">
-                      <p className="text-[10px] font-bold uppercase text-on-surface-variant mb-1 flex items-center gap-1">
-                        <Beaker size={12} /> Factory pH
-                      </p>
-                      <p className={cn("font-bold", (Number(rec.factoryPh) < 6.6 || Number(rec.factoryPh) > 6.8) ? "text-error" : "text-green-600")}>
-                        {rec.factoryPh ? formatNumber(rec.factoryPh, 2) : 'N/A'}
-                      </p>
-                    </div>
-                    <div className="bg-white p-3 rounded-lg border border-outline-variant/10">
-                      <p className="text-[10px] font-bold uppercase text-on-surface-variant mb-1 flex items-center gap-1">
-                        <Beaker size={12} /> Density
-                      </p>
-                      <p className={cn("font-bold", (Number(rec.density) < 1.028 || Number(rec.density) > 1.032) ? "text-error" : "text-green-600")}>
-                        {formatNumber(rec.density, 3)}
-                      </p>
-                      <p className="text-[10px] opacity-60">MCC Lab Result</p>
-                    </div>
-                    <div className="bg-white p-3 rounded-lg border border-outline-variant/10">
-                      <p className="text-[10px] font-bold uppercase text-on-surface-variant mb-1 flex items-center gap-1">
-                        <Beaker size={12} /> Factory Alcohol
-                      </p>
-                      <p className={cn("font-bold", rec.factoryAlcoholTest === 'Fail' ? "text-error" : "text-green-600")}>
-                        {rec.factoryAlcoholTest || 'N/A'}
-                      </p>
-                    </div>
-                  </div>
-                  
-                  {isOverallFail && (
-                    <div className="mt-4 p-3 bg-red-50 border border-red-100 rounded-lg flex items-center gap-2 text-error text-xs font-bold">
-                      <AlertCircle size={16} />
-                      WARNING: This batch failed one or more quality tests. Review carefully before intake.
-                    </div>
-                  )}
-                </div>
+                  </td>
+                </tr>
               )}
+            </tbody>
+          </table>
+        </div>
 
-              <div className="p-4 bg-surface-container-lowest">
-              {editingId === rec.id ? (
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
-                  <div className="space-y-1">
-                    <DateInput 
-                      value={intakeData.receivedAt} 
-                      onChange={val => setIntakeData({...intakeData, receivedAt: val})}
-                      label="Received Date"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold uppercase">Qty Received (L)</label>
-                    <input 
-                      type="number" 
-                      value={intakeData.qtyReceived} 
-                      onChange={e => setIntakeData({...intakeData, qtyReceived: e.target.value})}
-                      className="w-full bg-white border-outline-variant/30 rounded-lg text-sm"
-                      placeholder={rec.litresLoaded.toString()}
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold uppercase">Difference (L)</label>
-                    <input 
-                      type="text"
-                      readOnly
-                      value={(intakeData.qtyReceived && rec.factoryStatus === 'Received') ? `${(Number(intakeData.qtyReceived || 0) - Number(rec.litresLoaded)) > 0 ? '+' : ''}${formatNumber(Number(intakeData.qtyReceived || 0) - Number(rec.litresLoaded), 2)} L` : ''}
-                      className={cn(
-                        "w-full bg-surface-container-low border-outline-variant/30 rounded-lg text-sm font-bold",
-                        (Number(intakeData.qtyReceived || 0) - Number(rec.litresLoaded)) > 0 ? "text-green-600" : 
-                        (Number(intakeData.qtyReceived || 0) - Number(rec.litresLoaded)) < 0 ? "text-error" : "text-on-surface-variant"
-                      )}
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold uppercase">Status</label>
-                    <select 
-                      value={intakeData.status} 
-                      onChange={e => setIntakeData({...intakeData, status: e.target.value})}
-                      className={cn(
-                        "w-full border-outline-variant/30 rounded-lg text-sm font-bold",
-                        intakeData.status === 'Received' ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"
-                      )}
-                    >
-                      <option value="Received">Received</option>
-                      <option value="Rejected">Rejected</option>
-                    </select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold uppercase">Temp (°C)</label>
-                    <input 
-                      type="number" 
-                      step="0.1"
-                      value={intakeData.temp} 
-                      onChange={e => setIntakeData({...intakeData, temp: e.target.value})}
-                      className="w-full bg-white border-outline-variant/30 rounded-lg text-sm"
-                      placeholder="e.g. 4.5"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold uppercase">pH Level</label>
-                    <input 
-                      type="number" 
-                      step="0.01"
-                      value={intakeData.ph} 
-                      onChange={e => setIntakeData({...intakeData, ph: e.target.value})}
-                      className="w-full bg-white border-outline-variant/30 rounded-lg text-sm"
-                      placeholder="6.7"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold uppercase">Alcohol Test</label>
-                    <select 
-                      value={intakeData.alcoholTest} 
-                      onChange={e => setIntakeData({...intakeData, alcoholTest: e.target.value})}
-                      className="w-full bg-white border-outline-variant/30 rounded-lg text-sm"
-                    >
-                      <option value="Pass">Pass</option>
-                      <option value="Fail">Fail</option>
-                    </select>
-                  </div>
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <label className="text-[10px] font-bold uppercase">Resazurin (Factory)</label>
-                    </div>
-                    <div className="space-y-2">
-                      <ResazurinBadge value={intakeData.resazurin} className="w-full justify-center" />
-                      <select 
-                        value={intakeData.resazurin} 
-                        onChange={e => setIntakeData({...intakeData, resazurin: e.target.value})}
-                        className="w-full bg-white border-outline-variant/30 rounded-lg text-sm"
-                      >
-                        {RESAZURIN_SCALE.map(grade => (
-                          <option key={grade.value} value={grade.value}>{grade.label} ({grade.description})</option>
-                        ))}
-                      </select>
+      <Modal
+        isOpen={!!editingId && expandedId === editingId}
+        onClose={() => { setEditingId(null); setExpandedId(null); }}
+        title="Factory Intake & QA"
+        icon={<Truck size={20} />}
+        maxWidth="max-w-4xl"
+      >
+        {editingId && paginatedRecords.find(r => r.id === editingId) && (
+          <div className="space-y-6">
+            {(() => {
+              const rec = paginatedRecords.find(r => r.id === editingId);
+              const isTempFail = (rec.tempAtLoading || 0) > 6;
+              const parsedPhValue = Number(String(rec.ph || '').replace(',', '.'));
+              const isPhFail = isNaN(parsedPhValue) || parsedPhValue < 6.6 || parsedPhValue > 6.8;
+              const isAlcoholFail = rec.alcoholTest === 'Fail';
+              
+              return (
+                <div className="space-y-6">
+                  <div className="bg-surface-container-highest p-4 rounded-2xl border border-outline-variant/10">
+                    <h3 className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 mb-3 tracking-widest">Sent From MCC Quality Results</h3>
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                      <div className="bg-white p-2.5 rounded-xl border border-outline-variant/10 shadow-sm transition-transform hover:scale-[1.02]">
+                        <p className="text-[9px] font-bold uppercase text-on-surface-variant mb-0.5 flex items-center gap-1">
+                          <Beaker size={10} className="text-primary" /> Temp (MCC)
+                        </p>
+                        <p className={cn("font-bold text-base", isTempFail ? "text-error" : "text-green-600")}>
+                          {formatNumber(rec.tempAtLoading, 1)}°C
+                        </p>
+                      </div>
+                      <div className="bg-white p-2.5 rounded-xl border border-outline-variant/10 shadow-sm transition-transform hover:scale-[1.02]">
+                        <p className="text-[9px] font-bold uppercase text-on-surface-variant mb-0.5 flex items-center gap-1">
+                          <Beaker size={10} className="text-primary" /> pH (MCC)
+                        </p>
+                        <p className={cn("font-bold text-base", isPhFail ? "text-error" : "text-green-600")}>
+                          {formatNumber(rec.ph, 1)}
+                        </p>
+                      </div>
+                      <div className="bg-white p-2.5 rounded-xl border border-outline-variant/10 shadow-sm transition-transform hover:scale-[1.02]">
+                        <p className="text-[9px] font-bold uppercase text-on-surface-variant mb-0.5 flex items-center gap-1">
+                          <Beaker size={10} className="text-primary" /> Alcohol (MCC)
+                        </p>
+                        <p className={cn("font-bold text-base", isAlcoholFail ? "text-error" : "text-green-600")}>
+                          {rec.alcoholTest}
+                        </p>
+                      </div>
+                      <div className="bg-white p-2.5 rounded-xl border border-outline-variant/10 shadow-sm flex flex-col justify-center">
+                        <p className="text-[9px] font-bold uppercase text-on-surface-variant mb-0.5 flex items-center gap-1">
+                          <Beaker size={10} className="text-primary" /> Resazurin (MCC)
+                        </p>
+                        <ResazurinBadge value={rec.resazurin} className="w-full justify-center py-1 text-[10px]" />
+                      </div>
+                      <div className="bg-white p-2.5 rounded-xl border border-outline-variant/10 shadow-sm transition-transform hover:scale-[1.02]">
+                        <p className="text-[9px] font-bold uppercase text-on-surface-variant mb-0.5 flex items-center gap-1">
+                          <Beaker size={10} className="text-primary" /> Density (MCC)
+                        </p>
+                        <p className="font-bold text-base text-primary">{formatNumber(rec.density, 3)}</p>
+                      </div>
                     </div>
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold uppercase">Qty Rejected (L)</label>
-                    <input 
-                      type="number" 
-                      value={intakeData.qtyRejected} 
-                      onChange={e => setIntakeData({...intakeData, qtyRejected: e.target.value})}
-                      className="w-full bg-white border-outline-variant/30 rounded-lg text-sm"
-                    />
+
+                  <div className="space-y-4">
+                    <h3 className="text-sm font-black flex items-center gap-2 text-primary uppercase tracking-wider">
+                      <Save size={18} /> Record Intake QA Parameters
+                    </h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                      <div className="space-y-1">
+                        <DateInput 
+                          value={intakeData.receivedAt} 
+                          onChange={val => setIntakeData({...intakeData, receivedAt: val})}
+                          label="Received Date"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Qty Received (L)</label>
+                        <input 
+                          type="text" 
+                          inputMode="decimal" 
+                          value={intakeData.qtyReceived} 
+                          onChange={e => setIntakeData({...intakeData, qtyReceived: e.target.value})}
+                          onBlur={e => setIntakeData({...intakeData, qtyReceived: e.target.value.trim() ? formatNumber(e.target.value, 2, true, true) : ''})}
+                          className="w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-black transition-all"
+                          placeholder={formatNumber(rec.litresLoaded, 2, true, true)}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Collection Status</label>
+                        <select 
+                          value={intakeData.status} 
+                          onChange={e => setIntakeData({...intakeData, status: e.target.value})}
+                          className={cn(
+                            "w-full border-none rounded-xl text-sm font-black h-11 px-4 transition-all",
+                            intakeData.status === 'Received' ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700 font-black h-11"
+                          )}
+                        >
+                          <option value="Received">✅ Received</option>
+                          <option value="Rejected">❌ Rejected</option>
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Resazurin (Factory)</label>
+                        <select 
+                          value={intakeData.resazurin} 
+                          onChange={e => setIntakeData({...intakeData, resazurin: e.target.value})}
+                          className="w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-bold"
+                        >
+                          {RESAZURIN_SCALE.map(grade => (
+                            <option key={grade.value} value={grade.value}>{grade.label} ({grade.description})</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Temp (°C) (Factory)</label>
+                        <input 
+                          type="text" inputMode="decimal"
+                          value={intakeData.temp} 
+                          onChange={e => setIntakeData({...intakeData, temp: e.target.value.replace(',', '.')})}
+                          className="w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-bold"
+                          placeholder="---"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">pH (Factory)</label>
+                        <input 
+                          type="text" inputMode="decimal"
+                          value={intakeData.ph} 
+                          onChange={e => setIntakeData({...intakeData, ph: e.target.value.replace(',', '.')})}
+                          className="w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-bold"
+                          placeholder="---"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Qty Rejected (L)</label>
+                        <input 
+                          type="text" 
+                          inputMode="decimal" 
+                          value={intakeData.qtyRejected} 
+                          onChange={e => setIntakeData({...intakeData, qtyRejected: e.target.value})}
+                          onBlur={e => setIntakeData({...intakeData, qtyRejected: e.target.value.trim() ? formatNumber(e.target.value, 2, true, true) : '0.00'})}
+                          className="w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 text-error font-black"
+                          placeholder="0.00"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                         <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Alcohol Test (Factory)</label>
+                         <select 
+                            value={intakeData.alcoholTest} 
+                            onChange={e => setIntakeData({...intakeData, alcoholTest: e.target.value})}
+                            className="w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-bold"
+                          >
+                            <option value="Pass">Pass</option>
+                            <option value="Fail">Fail</option>
+                          </select>
+                      </div>
+                      <div className="space-y-1 sm:col-span-1 lg:col-span-1">
+                        <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Difference (L)</label>
+                        <div className={cn(
+                          "w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-black flex items-center",
+                          (Number(intakeData.qtyReceived) - Number(rec.litresLoaded)) > 0 ? "text-green-600" : 
+                          (Number(intakeData.qtyReceived) - Number(rec.litresLoaded)) < 0 ? "text-error" : "text-on-surface-variant opacity-40"
+                        )}>
+                          {(Number(intakeData.qtyReceived) - Number(rec.litresLoaded)) > 0 ? '+' : ''}
+                          {formatNumber(Number(intakeData.qtyReceived) - Number(rec.litresLoaded), 2, true, true)} L
+                        </div>
+                      </div>
+                      <div className="space-y-1 sm:col-span-2 md:col-span-3 lg:col-span-3">
+                        <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Factory Remarks</label>
+                        <textarea 
+                          value={intakeData.factoryRemarks} 
+                          onChange={e => setIntakeData({...intakeData, factoryRemarks: e.target.value})}
+                          className="w-full bg-surface-container-low border-none rounded-xl text-sm h-20 p-4 font-medium"
+                          placeholder="Add any additional notes from factory intake..."
+                        />
+                      </div>
+                    </div>
                   </div>
-                  <div className="space-y-1 md:col-span-3">
-                    <label className="text-[10px] font-bold uppercase">Remarks</label>
-                    <input 
-                      value={intakeData.factoryRemarks} 
-                      onChange={e => setIntakeData({...intakeData, factoryRemarks: e.target.value})}
-                      className="w-full bg-white border-outline-variant/30 rounded-lg text-sm"
-                      placeholder="Condition of milk..."
-                    />
-                  </div>
-                  <div className="flex gap-2 md:col-span-2">
+
+                  <div className="flex justify-end gap-3 pt-4 border-t border-outline-variant/10">
                     <button 
-                      onClick={() => handleSave(rec.id, rec.litresLoaded)}
-                      className="flex-1 bg-primary text-white py-2 rounded-lg font-bold flex items-center justify-center gap-2"
-                    >
-                      <Save size={16} /> Save
-                    </button>
-                    <button 
-                      onClick={() => setEditingId(null)}
-                      className="px-4 py-2 border border-outline-variant rounded-lg font-bold"
+                      onClick={() => { setEditingId(null); setExpandedId(null); }}
+                      className="px-8 py-3 rounded-[1.25rem] font-black text-on-surface-variant hover:bg-surface-container-high transition-all uppercase text-[10px] tracking-widest"
                     >
                       Cancel
                     </button>
+                    <button 
+                      onClick={() => handleSave(rec.id, rec.litresLoaded)}
+                      className="bg-primary text-white px-12 py-3 rounded-[1.25rem] font-black shadow-lg shadow-primary/20 hover:shadow-primary/40 transition-all uppercase text-[10px] tracking-widest flex items-center gap-2"
+                    >
+                      <Save size={18} /> Complete Intake Report
+                    </button>
                   </div>
                 </div>
-              ) : (
-                <div className="flex items-center justify-between">
-                  <div className="flex gap-8">
-                    <div>
-                      <p className="text-[10px] font-bold uppercase text-on-surface-variant">Actual Received</p>
-                      <p className={cn(
-                        "font-bold text-lg",
-                        rec.qtyReceived 
-                          ? (Number(rec.qtyReceived) >= Number(rec.litresLoaded) ? "text-green-600" : "text-error")
-                          : "text-on-surface/30"
-                      )}>
-                        {rec.qtyReceived ? `${formatNumber(rec.qtyReceived, 2)} L` : '---'}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-bold uppercase text-on-surface-variant">Rejected</p>
-                      <p className={cn("font-bold text-lg", rec.qtyRejected > 0 ? "text-error" : "text-on-surface/30")}>
-                        {rec.qtyRejected ? `${formatNumber(rec.qtyRejected, 2)} L` : '---'}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-bold uppercase text-on-surface-variant">Difference</p>
-                      <p className={cn(
-                        "font-bold text-lg", 
-                        rec.qtyReceived && rec.factoryStatus === 'Received'
-                          ? ((Number(rec.qtyReceived) - Number(rec.litresLoaded)) >= 0 ? "text-green-600" : "text-error")
-                          : "text-on-surface-variant/30"
-                      )}>
-                        {rec.qtyReceived && rec.factoryStatus === 'Received' ? `${(Number(rec.qtyReceived) - Number(rec.litresLoaded)) > 0 ? '+' : ''}${formatNumber(Number(rec.qtyReceived) - Number(rec.litresLoaded), 2)} L` : ''}
-                      </p>
-                    </div>
-                    {rec.factoryRemarks && (
-                      <div>
-                        <p className="text-[10px] font-bold uppercase text-on-surface-variant">Factory Remarks</p>
-                        <p className="text-sm italic">"{rec.factoryRemarks}"</p>
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {isAdmin && (
-                      <button 
-                        onClick={() => handleDelete(rec.id)}
-                        className="p-2 text-error hover:bg-red-50 rounded-lg transition-colors"
-                        title="Delete Record"
-                      >
-                        <Trash2 size={20} />
-                      </button>
-                    )}
-                    {(canWrite || isAdmin) && (
-                      <button 
-                        onClick={() => {
-                          setEditingId(rec.id);
-                          setIntakeData({
-                            qtyReceived: rec.qtyReceived || rec.litresLoaded,
-                            qtyRejected: rec.qtyRejected || '0',
-                            resazurin: rec.factoryResazurin || '6',
-                            temp: rec.factoryTemp || '',
-                            ph: rec.factoryPh || '',
-                            alcoholTest: rec.factoryAlcoholTest || 'Pass',
-                            receivedAt: rec.receivedAt ? rec.receivedAt.split('T')[0] : getTanzaniaTodayStr(),
-                            factoryRemarks: rec.factoryRemarks || '',
-                            status: rec.factoryStatus || 'Received'
-                          });
-                        }}
-                        className={cn(
-                          "px-4 py-2 rounded-lg font-bold transition-colors",
-                          rec.factoryStatus === 'Received' 
-                            ? "bg-green-100 text-green-600 hover:bg-green-200" 
-                            : "bg-primary/10 text-primary hover:bg-primary/20"
-                        )}
-                      >
-                        {rec.factoryStatus === 'Received' ? 'Update Intake' : 'Record Intake'}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        );
-      })}
-
-        {filteredRecords.length === 0 && (
-          <div className="text-center py-20 bg-white rounded-xl border border-dashed border-outline-variant">
-            <Truck className="mx-auto text-outline-variant mb-4" size={48} />
-            <p className="text-on-surface-variant">No truck dispatches found.</p>
+              );
+            })()}
           </div>
         )}
-      </div>
+      </Modal>
 
       {/* Pagination Controls */}
       {filteredRecords.length > pageSize && (

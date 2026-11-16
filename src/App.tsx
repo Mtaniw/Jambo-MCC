@@ -1,5 +1,5 @@
 import React, { Suspense, lazy } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './hooks/useAuth';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -57,8 +57,9 @@ function PrivateRoute({ children, roles, pageName }: { children: React.ReactNode
     );
   }
 
-  // Admin always has access
-  if (profile?.role === 'Admin') {
+  // Admin and Super User always have access (Fail-safe for primary admin)
+  const isPrimaryAdmin = user?.email?.toLowerCase() === 'mtaniwambura@gmail.com';
+  if (effectiveRole === 'Admin' || effectiveRole === 'Super User' || isPrimaryAdmin) {
     return <Layout>{children}</Layout>;
   }
 
@@ -84,10 +85,10 @@ function PrivateRoute({ children, roles, pageName }: { children: React.ReactNode
 
 export default function App() {
   return (
-    <AuthProvider>
-      <BrandingManager />
-      <PresenceTracker />
-      <ErrorBoundary>
+    <ErrorBoundary>
+      <AuthProvider>
+        <BrandingManager />
+        <PresenceTracker />
         <Router>
           <Suspense fallback={<LoadingScreen />}>
             <Routes>
@@ -106,7 +107,7 @@ export default function App() {
               <Route path="/reports/milk-cans-issued" element={<PrivateRoute pageName="Reports" roles={['Super User', 'Admin', 'Cashier', 'Quality Controller', 'Supervisor', 'Manager', 'Director', 'Viewer']}><MilkCansIssuedReport /></PrivateRoute>} />
               <Route path="/reports/weekly" element={<PrivateRoute pageName="Reports" roles={['Super User', 'Admin', 'Cashier', 'Supervisor', 'Manager', 'Director', 'Viewer']}><WeeklyReport /></PrivateRoute>} />
               <Route path="/reports/monthly" element={<PrivateRoute pageName="Reports" roles={['Super User', 'Admin', 'Cashier', 'Supervisor', 'Manager', 'Director', 'Viewer']}><MonthlyReport /></PrivateRoute>} />
-              <Route path="/reports/supplier-performance" element={<PrivateRoute pageName="Reports" roles={['Super User', 'Admin', 'Supervisor', 'Manager', 'Director']}><SupplierMonthlyPerformance /></PrivateRoute>} />
+              <Route path="/reports/supplier-performance" element={<PrivateRoute pageName="Reports" roles={['Super User', 'Admin', 'Supervisor', 'Manager', 'Director', 'Cashier', 'Quality Controller']}><SupplierMonthlyPerformance /></PrivateRoute>} />
               <Route path="/reports/tanker-weekly" element={<PrivateRoute pageName="Reports" roles={['Super User', 'Admin', 'Cashier', 'Supervisor', 'Manager', 'Director']}><TankerWeeklyReport /></PrivateRoute>} />
               <Route path="/admin" element={<PrivateRoute pageName="Admin" roles={['Super User', 'Admin']}><Admin /></PrivateRoute>} />
               <Route path="/sellers" element={<PrivateRoute pageName="Sellers" roles={['Super User', 'Admin', 'Manager', 'Director']}><Sellers /></PrivateRoute>} />
@@ -114,7 +115,7 @@ export default function App() {
             </Routes>
           </Suspense>
         </Router>
-      </ErrorBoundary>
-    </AuthProvider>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }

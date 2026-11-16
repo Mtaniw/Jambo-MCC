@@ -4,13 +4,14 @@ import { db } from '../firebase';
 import { useAuth } from '../hooks/useAuth';
 import { useSearchParams } from 'react-router-dom';
 import { handleFirestoreError, OperationType } from '../lib/errorHandlers';
-import { Plus, Search, Filter, Download, Trash2, Edit2, Check, X, FileText, Table as TableIcon, FileDown, AlertCircle, Loader2, Calendar, History, Upload, ChevronDown, TrendingUp, TrendingDown } from 'lucide-react';
+import { Plus, Search, Filter, Download, Trash2, Edit2, Check, X, FileText, Table as TableIcon, FileDown, AlertCircle, Loader2, Calendar, History, Upload, ChevronDown, TrendingUp, TrendingDown, Phone } from 'lucide-react';
 import { cn, formatNumber } from '../lib/utils';
 import { format, isWithinInterval, startOfDay, endOfDay, startOfWeek, startOfMonth } from 'date-fns';
-import { getTanzaniaTodayStr, parseTanzaniaDate, safeFormat, getTanzaniaMonthStartStr, getTanzaniaDate } from '../lib/dateUtils';
+import { getTanzaniaTodayStr, parseTanzaniaDate, safeFormat, getTanzaniaMonthStartStr, getTanzaniaDate, getSystemStartDate } from '../lib/dateUtils';
 import { TypeAhead } from '../components/TypeAhead';
 import { ImportModal } from '../components/ImportModal';
 import { DateInput } from '../components/DateInput';
+import { Modal } from '../components/Modal';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
@@ -25,6 +26,7 @@ interface MCC {
 interface Seller {
   id: string;
   name: string;
+  phone?: string;
   mccIds: string[];
   [key: string]: any;
 }
@@ -35,6 +37,7 @@ interface Entry {
   mccId: string;
   sellerId: string;
   manualSellerName?: string;
+  manualSellerPhone?: string;
   quantity: number;
   unit: string;
   pricePerUnit: number;
@@ -72,10 +75,13 @@ export default function DailyRegister() {
   const [showImportModal, setShowImportModal] = useState(false);
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'date', direction: 'desc' });
   const [sellerExistConfirm, setSellerExistConfirm] = useState<{ name: string, id: string } | null>(null);
+  const [entryToDelete, setEntryToDelete] = useState<Entry | null>(null);
 
   const [isInitialLoading, setIsInitialLoading] = useState(true);
-  const isGlobalViewer = profile && ['Super User', 'Admin', 'Factory Clerk', 'Supervisor', 'Manager', 'Director'].includes(effectiveRole as string);
-  const canWrite = profile && (profile.role === 'Admin' || !['Supervisor', 'Manager', 'Director'].includes(effectiveRole as string));
+  const isActualAdmin = profile && ['Admin', 'Super User'].includes(profile.role);
+  const isGlobalViewer = isActualAdmin || (profile && ['Factory Clerk', 'Supervisor', 'Manager', 'Director'].includes(effectiveRole as string));
+  const canWrite = isActualAdmin || (profile && !['Supervisor', 'Manager', 'Director', 'Viewer'].includes(effectiveRole as string));
+  const canDelete = isActualAdmin || (profile && ['Cashier', 'Quality Controller', 'Grader', 'Factory Clerk'].includes(effectiveRole as string));
 
   // Consolidated Listeners
   useEffect(() => {
@@ -185,6 +191,7 @@ export default function DailyRegister() {
   const [formData, setFormData] = useState({
     sellerId: '',
     manualSellerName: '',
+    manualSellerPhone: '',
     isManualSeller: false,
     mccId: '',
     date: getTanzaniaTodayStr(),
@@ -207,10 +214,12 @@ export default function DailyRegister() {
     mutationFn: async (data: any) => {
       let finalSellerId = data.sellerId;
       let finalManualSellerName = data.manualSellerName;
+      const trimmedPhone = (data.manualSellerPhone || '').trim();
 
       if (data.isManualSeller && data.manualSellerName) {
         const sellerRef = await addDoc(collection(db, 'sellers'), {
-          name: data.manualSellerName,
+          name: data.manualSellerName.trim(),
+          phone: trimmedPhone,
           mccIds: [data.mccId],
           active: true,
           category: 'Individual',
@@ -229,6 +238,7 @@ export default function DailyRegister() {
         ...data,
         sellerId: finalSellerId,
         manualSellerName: finalManualSellerName,
+        manualSellerPhone: trimmedPhone,
         resolvedSellerName,
         quantity: Number(data.quantity),
         pricePerUnit: Number(data.pricePerUnit),
@@ -271,7 +281,7 @@ export default function DailyRegister() {
       setIsAdding(false);
       setEditingId(null);
       setSellerSearch('');
-      setFormData(prev => ({ ...prev, quantity: '', remarks: '', manualSellerName: '', isManualSeller: false }));
+      setFormData(prev => ({ ...prev, quantity: '', remarks: '', manualSellerName: '', manualSellerPhone: '', isManualSeller: false }));
       setTimeout(() => setSuccess(null), 3000);
     },
     onError: (err: any, _newEntry, context) => {
@@ -384,8 +394,10 @@ export default function DailyRegister() {
 
     const filtered = mapped.filter(entry => {
       const mcc = mccMap.get(entry.mccId);
+      const sellerPhone = (entry.sellerDetails?.phone || entry.manualSellerPhone || '').toLowerCase();
       const matchesSearch = 
         entry.resolvedSellerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        sellerPhone.includes(searchTerm.toLowerCase()) ||
         (mcc?.name || '').toLowerCase().includes(searchTerm.toLowerCase());
       
       const matchesMcc = selectedMccId === 'all' || entry.mccId === selectedMccId;
@@ -495,6 +507,27 @@ export default function DailyRegister() {
     saveMutation.mutate(formData);
   };
 
+  const openEditModal = (entry: Entry) => {
+    setError(null);
+    setSuccess(null);
+    setFormData({
+      sellerId: entry.sellerId === 'MANUAL' ? '' : entry.sellerId,
+      manualSellerName: entry.manualSellerName || '',
+      manualSellerPhone: entry.manualSellerPhone || entry.sellerDetails?.phone || '',
+      isManualSeller: entry.sellerId === 'MANUAL',
+      mccId: entry.mccId,
+      date: entry.date,
+      quantity: entry.quantity.toString(),
+      unit: entry.unit || 'Litres',
+      pricePerUnit: entry.pricePerUnit.toString(),
+      status: entry.status || 'PAID',
+      remarks: entry.remarks || ''
+    });
+    setSellerSearch(entry.resolvedSellerName || '');
+    setEditingId(entry.id);
+    setIsAdding(true);
+  };
+
   const handleSort = (key: string) => {
     setSortConfig(prev => ({
       key,
@@ -591,7 +624,7 @@ export default function DailyRegister() {
         remarks: row.Remarks || 'Imported',
         createdAt: now,
         updatedAt: now,
-        recordedBy: profile?.email
+        recordedBy: profile?.fullName || profile?.email || 'System'
       });
     }
     await batch.commit();
@@ -603,9 +636,9 @@ export default function DailyRegister() {
       Date: entry.date,
       MCC: mccs.find(m => m.id === entry.mccId)?.name || 'Unknown',
       Seller: entry.manualSellerName || sellers.find(s => s.id === entry.sellerId)?.name || entry.sellerId,
-      Quantity: `${formatNumber(entry.quantity, 2)} ${entry.unit}`,
-      'Price/Unit': formatNumber(entry.pricePerUnit, 0),
-      Total: entry.quantity * entry.pricePerUnit,
+      Quantity: `${formatNumber(entry.quantity, 2, false, true)} ${entry.unit}`,
+      'Price/Unit': formatNumber(entry.pricePerUnit, 2, true, true),
+      Total: formatNumber(entry.quantity * entry.pricePerUnit, 2, true, true),
       Status: entry.status
     }));
 
@@ -632,7 +665,7 @@ export default function DailyRegister() {
           row.Seller,
           row.Quantity,
           row['Price/Unit'],
-          formatNumber(row.Total, 0),
+          formatNumber(row.Total, 2, true, true),
           row.Status
         ]),
         theme: 'grid',
@@ -673,7 +706,7 @@ export default function DailyRegister() {
                       </div>
                       <div className="text-right">
                         <p className="text-xs font-bold uppercase text-primary opacity-60">Price per Unit</p>
-                        <p className="text-lg font-black text-primary">TSh {formatNumber(item.price, 0)}</p>
+                        <p className="text-lg font-black text-primary">TSh {formatNumber(item.price, 2, true, true)}</p>
                       </div>
                     </div>
                   ))}
@@ -712,7 +745,7 @@ export default function DailyRegister() {
             <div className="flex flex-col gap-2">
               <button 
                 onClick={() => {
-                  setFormData({ ...formData, isManualSeller: false, sellerId: sellerExistConfirm.id, manualSellerName: '' });
+                  setFormData({ ...formData, isManualSeller: false, sellerId: sellerExistConfirm.id, manualSellerName: '', manualSellerPhone: '' });
                   setSellerSearch(sellerExistConfirm.name);
                   setSellerExistConfirm(null);
                 }}
@@ -734,6 +767,56 @@ export default function DailyRegister() {
                 className="w-full py-2 font-bold text-on-surface-variant hover:underline mt-2"
               >
                 Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Single Record Delete Confirmation Modal */}
+      {entryToDelete && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[80]">
+          <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 mb-4 text-error">
+              <AlertCircle size={24} />
+              <h2 className="text-lg font-bold">Delete Record</h2>
+            </div>
+            <p className="text-sm text-on-surface-variant mb-6">
+              Are you sure you want to permanently delete the intake record for{' '}
+              <span className="font-bold text-on-surface">{entryToDelete.resolvedSellerName || 'this farmer'}</span>{' '}
+              ({formatNumber(entryToDelete.quantity, 2, false, true)} {entryToDelete.unit} on {safeFormat(entryToDelete.date, 'dd/MM/yyyy')})?
+              This action cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setEntryToDelete(null)}
+                disabled={deleteMutation.isPending}
+                className="flex-1 px-4 py-2 font-bold text-on-surface-variant hover:bg-surface-container-low rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const id = entryToDelete.id;
+                  deleteMutation.mutate(id, {
+                    onSuccess: () => {
+                      setEntryToDelete(null);
+                      if (editingId === id) {
+                        setIsAdding(false);
+                        setEditingId(null);
+                        setSellerSearch('');
+                      }
+                      setSelectedIds(prev => prev.filter(selectedId => selectedId !== id));
+                    }
+                  });
+                }}
+                disabled={deleteMutation.isPending}
+                className="flex-1 px-4 py-2 rounded-lg font-bold text-white bg-error hover:bg-red-700 shadow-lg transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {deleteMutation.isPending && <Loader2 className="animate-spin" size={14} />}
+                Delete
               </button>
             </div>
           </div>
@@ -775,16 +858,16 @@ export default function DailyRegister() {
 
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-on-surface">Daily Register</h1>
-          <p className="text-on-surface-variant text-sm">Daftari la Kila Siku - Milk intake records</p>
+          <h1 className="text-2xl md:text-3xl font-black tracking-tight text-on-surface">Daily Register</h1>
+          <p className="text-on-surface-variant font-medium text-xs">Daftari la Kila Siku - Milk intake records</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-1.5">
           {canWrite && (
             <button 
               onClick={() => setShowImportModal(true)}
-              className="bg-surface-container-high text-on-surface px-4 py-2 rounded-lg font-bold flex items-center justify-center gap-2 hover:bg-surface-container-highest transition-all"
+              className="bg-surface-container-high text-on-surface px-3 py-1.5 rounded-lg font-bold flex items-center justify-center gap-1.5 hover:bg-surface-container-highest transition-all text-xs"
             >
-              <Upload size={18} />
+              <Upload size={16} />
               Import
             </button>
           )}
@@ -798,9 +881,9 @@ export default function DailyRegister() {
                 setSellerSearch('');
               }}
               disabled={saveMutation.isPending}
-              className="bg-primary text-white px-4 py-2 rounded-lg font-bold flex items-center justify-center gap-2 shadow-lg hover:shadow-primary/20 transition-all disabled:opacity-50"
+              className="bg-primary text-white px-3 py-1.5 rounded-lg font-bold flex items-center justify-center gap-1.5 shadow-lg hover:shadow-primary/20 transition-all disabled:opacity-50 text-xs"
             >
-              {saveMutation.isPending ? <Loader2 className="animate-spin" size={18} /> : (isAdding ? <X size={18} /> : <Plus size={18} />)}
+              {saveMutation.isPending ? <Loader2 className="animate-spin" size={16} /> : (isAdding ? <X size={16} /> : <Plus size={16} />)}
               {isAdding ? 'Cancel' : 'Add Entry'}
             </button>
           )}
@@ -823,176 +906,234 @@ export default function DailyRegister() {
         </div>
       )}
 
-      {isAdding && (
-        <form onSubmit={handleSubmit} className="bg-white p-6 rounded-xl border border-outline-variant/20 shadow-sm grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="space-y-1">
-            <label className="text-xs font-bold uppercase tracking-wider">MCC</label>
-            <select 
-              value={formData.mccId} 
-              onChange={e => setFormData({...formData, mccId: e.target.value})}
-              className="w-full bg-surface-container-low border-none rounded-lg text-sm"
-              required
-            >
-              {mccs.map(mcc => <option key={mcc.id} value={mcc.id}>{mcc.name}</option>)}
-            </select>
-          </div>
-          <div className="space-y-1">
-            <div className="flex justify-between items-center">
-              <label className="text-xs font-bold uppercase tracking-wider">Seller</label>
-              <button 
-                type="button"
-                onClick={() => setFormData({...formData, isManualSeller: !formData.isManualSeller, sellerId: '', manualSellerName: ''})}
-                className="text-[10px] font-bold text-primary hover:underline"
-              >
-                {formData.isManualSeller ? 'Select from List' : 'Manual Entry'}
-              </button>
-            </div>
-            {formData.isManualSeller ? (
-              <input 
-                placeholder="Enter Seller Name"
-                value={formData.manualSellerName}
-                onChange={e => setFormData({...formData, manualSellerName: e.target.value})}
-                className="w-full bg-surface-container-low border-none rounded-lg text-sm"
-                required
-              />
-            ) : (
-              <TypeAhead
-                items={sellers.filter(s => formData.mccId ? (s.mccIds && s.mccIds.includes(formData.mccId)) : true)}
-                onSelect={(seller) => {
-                  setFormData({...formData, sellerId: seller.id});
-                  setSellerSearch(seller.name);
-                }}
-                onClear={() => {
-                  setFormData({...formData, sellerId: ''});
-                  setSellerSearch('');
-                }}
-                labelExtractor={(s) => s.name}
-                subLabelExtractor={(s) => {
-                  if (!s.mccIds || s.mccIds.length === 0) return 'No MCC';
-                  return s.mccIds.map((id: string) => mccs.find(m => m.id === id)?.name).filter(Boolean).join(', ');
-                }}
-                placeholder="Type to search seller..."
-                defaultValue={sellerSearch}
-                required={!formData.isManualSeller}
-              />
-            )}
-          </div>
-          <div className="space-y-1">
-            <DateInput 
-              value={formData.date} 
-              onChange={val => setFormData({...formData, date: val})}
-              label="Date"
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-bold uppercase tracking-wider">Quantity</label>
-            <div className="flex gap-2">
-              <input 
-                type="number" 
-                step="0.01"
-                value={formData.quantity} 
-                onChange={e => setFormData({...formData, quantity: e.target.value})}
-                className="flex-1 bg-surface-container-low border-none rounded-lg text-sm"
-                placeholder="0.00"
-                required
-              />
+      <Modal
+        isOpen={isAdding}
+        onClose={() => {
+          setIsAdding(false);
+          setEditingId(null);
+          setSellerSearch('');
+          setFormData(prev => ({ ...prev, quantity: '', remarks: '', manualSellerName: '', manualSellerPhone: '', isManualSeller: false }));
+        }}
+        title={editingId ? "Update Milk Intake Entry" : "Add New Milk Intake Entry"}
+        icon={<Plus size={20} />}
+        maxWidth="max-w-4xl"
+      >
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
+            <div className="space-y-1">
+              <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">MCC Station</label>
               <select 
-                value={formData.unit} 
-                onChange={e => setFormData({...formData, unit: e.target.value})}
-                className="w-24 bg-surface-container-low border-none rounded-lg text-sm"
+                value={formData.mccId} 
+                onChange={e => setFormData({...formData, mccId: e.target.value})}
+                className="w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-black transition-all"
+                required
               >
-                <option value="Litres">L</option>
-                <option value="KG">KG</option>
+                {mccs.map(mcc => <option key={mcc.id} value={mcc.id}>{mcc.name}</option>)}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <DateInput 
+                value={formData.date} 
+                onChange={val => setFormData({...formData, date: val})}
+                label="Intake Date"
+              />
+            </div>
+            <div className="space-y-1">
+              <div className="flex justify-between items-center mb-1.5">
+                <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 tracking-widest">Seller / Supplier</label>
+                <button 
+                  type="button"
+                  onClick={() => setFormData({...formData, isManualSeller: !formData.isManualSeller, sellerId: '', manualSellerName: '', manualSellerPhone: ''})}
+                  className="text-[10px] font-black text-primary hover:underline uppercase tracking-tighter"
+                >
+                  {formData.isManualSeller ? 'Search List' : 'Direct Entry'}
+                </button>
+              </div>
+              {formData.isManualSeller ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <input 
+                    placeholder="Enter Seller Name"
+                    value={formData.manualSellerName}
+                    onChange={e => setFormData({...formData, manualSellerName: e.target.value})}
+                    className="w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-black"
+                    required
+                  />
+                  <input 
+                    type="tel"
+                    placeholder="Phone Number (e.g. 07...)"
+                    value={formData.manualSellerPhone}
+                    onChange={e => setFormData({...formData, manualSellerPhone: e.target.value})}
+                    className="w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-black"
+                  />
+                </div>
+              ) : (
+                <TypeAhead
+                  items={sellers.filter(s => formData.mccId ? (s.mccIds && s.mccIds.includes(formData.mccId)) : true)}
+                  onSelect={(seller) => {
+                    setFormData({...formData, sellerId: seller.id});
+                    setSellerSearch(seller.name);
+                  }}
+                  onClear={() => {
+                    setFormData({...formData, sellerId: ''});
+                    setSellerSearch('');
+                  }}
+                  labelExtractor={(s) => s.name}
+                  subLabelExtractor={(s) => {
+                    const mccNames = (!s.mccIds || s.mccIds.length === 0)
+                      ? 'No MCC'
+                      : s.mccIds.map((id: string) => mccs.find(m => m.id === id)?.name).filter(Boolean).join(', ');
+                    return s.phone ? `${s.phone} • ${mccNames}` : mccNames;
+                  }}
+                  placeholder="Type to search seller..."
+                  defaultValue={sellerSearch}
+                  required={!formData.isManualSeller}
+                />
+              )}
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Milk Quantity</label>
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <input 
+                    type="number" 
+                    step="0.01"
+                    value={formData.quantity} 
+                    onChange={e => setFormData({...formData, quantity: e.target.value})}
+                    className="w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-black pr-12"
+                    placeholder="0.00"
+                    required
+                  />
+                  <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-black opacity-20 uppercase">QTY</div>
+                </div>
+                <select 
+                  value={formData.unit} 
+                  onChange={e => setFormData({...formData, unit: e.target.value})}
+                  className="w-24 bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-black"
+                >
+                  <option value="Litres">L</option>
+                  <option value="KG">KG</option>
+                </select>
+              </div>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Price Per Unit (TSh)</label>
+              <div className="relative">
+                <input 
+                  type="number" 
+                  value={formData.pricePerUnit} 
+                  onChange={e => setFormData({...formData, pricePerUnit: e.target.value})}
+                  className={cn(
+                    "w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-black",
+                    (profile?.role !== 'Super User' && profile?.role !== 'Admin') && "opacity-40 cursor-not-allowed"
+                  )}
+                  disabled={profile?.role !== 'Super User' && profile?.role !== 'Admin'}
+                  required
+                />
+                <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-black opacity-20 uppercase tracking-widest">TSH</div>
+              </div>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Payment Status</label>
+              <select 
+                value={formData.status} 
+                onChange={e => setFormData({...formData, status: e.target.value})}
+                className={cn(
+                  "w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-black transition-colors",
+                  formData.status === 'PAID' ? "text-green-600 bg-green-50" : "text-amber-600 bg-amber-50"
+                )}
+              >
+                <option value="PAID">✅ PAID</option>
+                <option value="UNPAID">⏳ UNPAID</option>
               </select>
             </div>
           </div>
+
           <div className="space-y-1">
-            <label className="text-xs font-bold uppercase tracking-wider">Price/Unit (TSh)</label>
-            <input 
-              type="number" 
-              value={formData.pricePerUnit} 
-              onChange={e => setFormData({...formData, pricePerUnit: e.target.value})}
-              className={cn(
-                "w-full bg-surface-container-low border-none rounded-lg text-sm",
-                (profile?.role !== 'Super User' && profile?.role !== 'Admin') && "opacity-60 cursor-not-allowed"
-              )}
-              disabled={profile?.role !== 'Super User' && profile?.role !== 'Admin'}
-              required
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-bold uppercase tracking-wider">Status</label>
-            <select 
-              value={formData.status} 
-              onChange={e => setFormData({...formData, status: e.target.value})}
-              className="w-full bg-surface-container-low border-none rounded-lg text-sm"
-            >
-              <option value="PAID">PAID</option>
-              <option value="UNPAID">UNPAID</option>
-            </select>
-          </div>
-          <div className="md:col-span-2 space-y-1">
-            <label className="text-xs font-bold uppercase tracking-wider">Remarks</label>
-            <input 
-              type="text" 
+            <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Additional Remarks</label>
+            <textarea 
               value={formData.remarks} 
               onChange={e => setFormData({...formData, remarks: e.target.value})}
-              className="w-full bg-surface-container-low border-none rounded-lg text-sm"
-              placeholder="Optional notes..."
+              className="w-full bg-surface-container-low border-none rounded-xl text-sm h-20 p-4 font-medium"
+              placeholder="Add any additional notes here..."
             />
           </div>
-          <div className="lg:col-span-2 flex items-center gap-4 bg-primary/5 p-3 rounded-lg border border-primary/10">
+
+          <div className="bg-primary/5 p-4 rounded-2xl border border-primary/10 flex flex-wrap justify-between items-center gap-3">
             <div>
-              <p className="text-[10px] font-bold uppercase text-primary opacity-70">Total Amount</p>
-              <p className="text-xl font-black text-primary">
-                TSh {formatNumber(Number(formData.quantity || 0) * Number(formData.pricePerUnit || 0), 0)}
+              <p className="text-[9px] font-black uppercase text-primary opacity-60 tracking-widest leading-none mb-1">Total Payout Amount</p>
+              <p className="text-2xl font-black text-primary">
+                TSh {formatNumber(Number(formData.quantity || 0) * Number(formData.pricePerUnit || 0), 2, true, true)}
               </p>
             </div>
-          </div>
-          <div className="lg:col-span-2 flex justify-end items-center">
-            <button 
-              type="submit" 
-              disabled={saveMutation.isPending}
-              className="bg-primary text-white px-8 py-2 rounded-lg font-bold shadow-lg flex items-center gap-2 disabled:opacity-50"
-            >
-              {saveMutation.isPending && <Loader2 className="animate-spin" size={18} />}
-              {editingId ? 'Update Record' : 'Save Record'}
-            </button>
+            <div className="flex flex-wrap gap-3">
+              {editingId && canDelete && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const current = filteredEntries.find(en => en.id === editingId) || entries.find(en => en.id === editingId);
+                    if (current) setEntryToDelete(current as Entry);
+                  }}
+                  disabled={saveMutation.isPending || deleteMutation.isPending}
+                  className="px-5 py-3 font-black text-error bg-error/10 hover:bg-error/20 rounded-xl transition-all uppercase text-[10px] tracking-widest flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <Trash2 size={14} /> Delete
+                </button>
+              )}
+              <button 
+                type="button" 
+                onClick={() => {
+                  setIsAdding(false);
+                  setEditingId(null);
+                  setSellerSearch('');
+                }}
+                className="px-6 py-3 font-black text-on-surface-variant hover:bg-surface-container-high rounded-xl transition-all uppercase text-[10px] tracking-widest"
+              >
+                Cancel
+              </button>
+              <button 
+                type="submit" 
+                disabled={saveMutation.isPending}
+                className="bg-primary text-white px-10 py-3 rounded-xl font-black shadow-lg shadow-primary/20 hover:shadow-primary/40 transition-all disabled:opacity-50 uppercase text-[10px] tracking-widest flex items-center gap-2"
+              >
+                {saveMutation.isPending && <Loader2 className="animate-spin" size={16} />}
+                {editingId ? 'Update Record' : 'Save Record'}
+              </button>
+            </div>
           </div>
         </form>
-      )}
+      </Modal>
 
       {/* Totals Summary */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white p-4 rounded-xl border border-outline-variant/20 shadow-sm">
-          <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Total Liters</p>
-          <p className="text-2xl font-black text-primary">{formatNumber(totals.liters, 2)} L</p>
+        <div className="bg-white p-4 rounded-2xl border border-outline-variant/20 shadow-sm transition-all hover:shadow-md">
+          <p className="text-[9px] font-bold text-on-surface-variant uppercase tracking-widest leading-none mb-1.5">Total Liters</p>
+          <p className="text-2xl font-black text-primary tracking-tight">{formatNumber(totals.liters, 2, false, true)} L</p>
         </div>
-        <div className="bg-white p-4 rounded-xl border border-outline-variant/20 shadow-sm">
-          <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Amount Paid</p>
-          <p className="text-2xl font-black text-green-600">TSh {formatNumber(totals.paidAmount, 0)}</p>
+        <div className="bg-white p-4 rounded-2xl border border-outline-variant/20 shadow-sm transition-all hover:shadow-md">
+          <p className="text-[9px] font-bold text-on-surface-variant uppercase tracking-widest leading-none mb-1.5">Amount Paid</p>
+          <p className="text-2xl font-black text-green-600 tracking-tight">TSh {formatNumber(totals.paidAmount, 2, true, true)}</p>
         </div>
-        <div className="bg-white p-4 rounded-xl border border-outline-variant/20 shadow-sm">
-          <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Amount Unpaid</p>
-          <p className="text-2xl font-black text-amber-600">TSh {formatNumber(totals.unpaidAmount, 0)}</p>
+        <div className="bg-white p-4 rounded-2xl border border-outline-variant/20 shadow-sm transition-all hover:shadow-md">
+          <p className="text-[9px] font-bold text-on-surface-variant uppercase tracking-widest leading-none mb-1.5">Amount Unpaid</p>
+          <p className="text-2xl font-black text-amber-600 tracking-tight">TSh {formatNumber(totals.unpaidAmount, 2, true, true)}</p>
         </div>
-        <div className="bg-white p-4 rounded-xl border border-outline-variant/20 shadow-sm">
-          <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Total Amount</p>
-          <p className="text-2xl font-black text-on-surface">TSh {formatNumber(totals.totalAmount, 0)}</p>
+        <div className="bg-white p-4 rounded-2xl border border-outline-variant/20 shadow-sm transition-all hover:shadow-md">
+          <p className="text-[9px] font-bold text-on-surface-variant uppercase tracking-widest leading-none mb-1.5">Total Amount</p>
+          <p className="text-2xl font-black text-on-surface tracking-tight">TSh {formatNumber(totals.totalAmount, 2, true, true)}</p>
         </div>
       </div>
 
       {/* Filters & Actions */}
-      <div className="bg-white p-4 rounded-xl border border-outline-variant/20 shadow-sm space-y-4">
+      <div className="bg-white p-4 rounded-3xl border border-outline-variant/20 shadow-sm space-y-4">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="flex flex-col md:flex-row md:items-center gap-4 flex-1">
+          <div className="flex flex-col md:flex-row md:items-center gap-3 flex-1">
             <div className="relative w-full md:max-w-xs">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant" size={18} />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant" size={16} />
               <input 
-                placeholder="Search Seller or MCC..." 
+                placeholder="Search..." 
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
-                className="w-full pl-10 bg-surface-container-low border-none rounded-lg text-sm"
+                className="w-full pl-9 bg-surface-container-low border-none rounded-lg text-xs h-9"
               />
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -1000,7 +1141,7 @@ export default function DailyRegister() {
                 <select 
                   value={selectedMccId} 
                   onChange={e => setSelectedMccId(e.target.value)}
-                  className="bg-surface-container-low border-none rounded-lg text-xs font-bold px-3 py-2 flex-1 md:flex-none"
+                  className="bg-surface-container-low border-none rounded-lg text-xs font-bold px-2 py-1.5 h-9"
                 >
                   <option value="all">All MCCs</option>
                   {mccs.map(mcc => <option key={mcc.id} value={mcc.id}>{mcc.name}</option>)}
@@ -1009,13 +1150,13 @@ export default function DailyRegister() {
               <select 
                 value={selectedStatus} 
                 onChange={e => setSelectedStatus(e.target.value)}
-                className="bg-surface-container-low border-none rounded-lg text-xs font-bold px-3 py-2 flex-1 md:flex-none"
+                className="bg-surface-container-low border-none rounded-lg text-xs font-bold px-2 py-1.5 h-9"
               >
                 <option value="all">All Status</option>
                 <option value="PAID">PAID</option>
                 <option value="UNPAID">UNPAID</option>
               </select>
-              <div className="flex bg-surface-container-low rounded-lg p-1 border border-outline-variant/10 w-full md:w-auto">
+              <div className="flex bg-surface-container-low rounded-lg p-0.5 border border-outline-variant/10 items-center h-9">
                 {[
                   { id: 'day', label: 'Day' },
                   { id: 'week', label: 'Week' },
@@ -1026,7 +1167,7 @@ export default function DailyRegister() {
                     key={p.id}
                     onClick={() => setPeriod(p.id as any)}
                     className={cn(
-                      "flex-1 md:flex-none px-3 py-1 rounded-md text-[10px] font-bold transition-all",
+                      "px-2.5 py-1 rounded-md text-[9px] font-bold transition-all",
                       period === p.id 
                         ? "bg-primary text-white shadow-sm" 
                         : "text-on-surface-variant hover:bg-surface-container-high"
@@ -1037,7 +1178,7 @@ export default function DailyRegister() {
                 ))}
               </div>
               <div className={cn(
-                "flex items-center gap-2 bg-surface-container-low rounded-lg p-1 border border-outline-variant/10 w-full md:w-auto overflow-x-auto transition-all",
+                "flex items-center gap-1.5 bg-surface-container-low rounded-lg p-0.5 border border-outline-variant/10 transition-all h-9",
                 period !== 'custom' && "opacity-50 pointer-events-none"
               )}>
                 <DateInput 
@@ -1045,7 +1186,7 @@ export default function DailyRegister() {
                   onChange={setStartDate}
                   label="From"
                 />
-                <div className="w-px h-8 bg-outline-variant/30 self-end mb-1"></div>
+                <div className="w-px h-6 bg-outline-variant/20"></div>
                 <DateInput 
                   value={endDate} 
                   onChange={setEndDate}
@@ -1054,7 +1195,7 @@ export default function DailyRegister() {
               </div>
             </div>
             </div>
-            <div className="flex gap-2 justify-end">
+            <div className="flex gap-1.5 justify-end">
             <button onClick={() => exportData('csv')} className="p-2 hover:bg-surface-container-low rounded-lg text-on-surface-variant flex items-center gap-1 text-xs font-bold" title="Export CSV">
               <FileDown size={18} /> CSV
             </button>
@@ -1068,9 +1209,22 @@ export default function DailyRegister() {
         </div>
 
         {selectedIds.length > 0 && canWrite && (
-          <div className="flex items-center gap-4 p-2 bg-primary/5 rounded-lg border border-primary/10 animate-in fade-in slide-in-from-top-2">
-            <span className="text-xs font-bold text-primary">{selectedIds.length} records selected</span>
+          <div className="flex flex-wrap items-center gap-4 p-2 bg-primary/5 rounded-lg border border-primary/10 animate-in fade-in slide-in-from-top-2">
+            <span className="text-xs font-bold text-primary">{selectedIds.length} {selectedIds.length === 1 ? 'record' : 'records'} selected</span>
             <div className="h-4 w-px bg-primary/20"></div>
+            {selectedIds.length === 1 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const selectedEntry = filteredEntries.find(en => en.id === selectedIds[0]);
+                  if (selectedEntry) openEditModal(selectedEntry);
+                }}
+                className="text-xs font-bold text-primary hover:underline flex items-center gap-1"
+              >
+                <Edit2 size={14} />
+                Edit Selected
+              </button>
+            )}
             <button 
               onClick={() => handleBulkAction('PAID')} 
               disabled={bulkMutation.isPending}
@@ -1079,14 +1233,16 @@ export default function DailyRegister() {
               {bulkMutation.isPending ? <Loader2 className="animate-spin" size={14} /> : <Check size={14} />}
               Mark as Paid
             </button>
-            <button 
-              onClick={() => handleBulkAction('DELETE')} 
-              disabled={bulkMutation.isPending}
-              className="text-xs font-bold text-error hover:underline flex items-center gap-1 disabled:opacity-50"
-            >
-              {bulkMutation.isPending ? <Loader2 className="animate-spin" size={14} /> : <Trash2 size={14} />}
-              Delete Selected
-            </button>
+            {canDelete && (
+              <button 
+                onClick={() => handleBulkAction('DELETE')} 
+                disabled={bulkMutation.isPending}
+                className="text-xs font-bold text-error hover:underline flex items-center gap-1 disabled:opacity-50"
+              >
+                {bulkMutation.isPending ? <Loader2 className="animate-spin" size={14} /> : <Trash2 size={14} />}
+                Delete Selected
+              </button>
+            )}
             <button onClick={() => setSelectedIds([])} className="ml-auto text-xs font-bold text-on-surface-variant hover:underline">
               Clear Selection
             </button>
@@ -1094,13 +1250,13 @@ export default function DailyRegister() {
         )}
       </div>
 
-      <div className="bg-white rounded-xl border border-outline-variant/20 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-3xl border border-outline-variant/20 shadow-sm overflow-hidden">
         {/* Desktop Table View */}
-        <div className="hidden md:block overflow-x-auto">
+        <div className="hidden md:block overflow-x-auto custom-scrollbar-light">
           <table className="w-full text-left">
-            <thead className="bg-surface-container-low font-bold uppercase text-[10px] tracking-wider text-on-surface-variant">
+            <thead className="bg-surface-container-low font-black uppercase text-[9px] tracking-widest text-on-surface-variant">
               <tr>
-                <th className="px-6 py-4 border-b border-outline-variant/10">
+                <th className="px-2 py-3 border-b border-outline-variant/10">
                   {canWrite && (
                     <input 
                       type="checkbox" 
@@ -1109,45 +1265,56 @@ export default function DailyRegister() {
                         if (e.target.checked) setSelectedIds(filteredEntries.map(en => en.id));
                         else setSelectedIds([]);
                       }}
-                      className="rounded text-primary"
+                      className="rounded text-primary h-3.5 w-3.5"
                     />
                   )}
                 </th>
-                <th className="px-6 py-4 border-b border-outline-variant/10">#</th>
-                <th className="px-6 py-4 border-b border-outline-variant/10 cursor-pointer hover:bg-surface-container-high transition-colors" onClick={() => handleSort('date')}>
-                  <div className="flex items-center gap-2">
+                <th className="px-2 py-3 border-b border-outline-variant/10">#</th>
+                <th className="px-2 py-3 border-b border-outline-variant/10 cursor-pointer hover:bg-surface-container focus:outline-none transition-colors" onClick={() => handleSort('date')}>
+                  <div className="flex items-center gap-1">
                     Date <SortIcon column="date" />
                   </div>
                 </th>
-                <th className="px-6 py-4 border-b border-outline-variant/10">MCC</th>
-                <th className="px-6 py-4 border-b border-outline-variant/10 cursor-pointer hover:bg-surface-container-high transition-colors" onClick={() => handleSort('seller')}>
-                  <div className="flex items-center gap-2">
+                <th className="px-2 py-3 border-b border-outline-variant/10">MCC</th>
+                <th className="px-2 py-3 border-b border-outline-variant/10 cursor-pointer hover:bg-surface-container focus:outline-none transition-colors" onClick={() => handleSort('seller')}>
+                  <div className="flex items-center gap-1">
                     Seller <SortIcon column="seller" />
                   </div>
                 </th>
-                <th className="px-6 py-4 border-b border-outline-variant/10 cursor-pointer hover:bg-surface-container-high transition-colors" onClick={() => handleSort('quantity')}>
-                  <div className="flex items-center gap-2">
-                    Quantity <SortIcon column="quantity" />
+                <th className="px-2 py-3 border-b border-outline-variant/10 cursor-pointer hover:bg-surface-container focus:outline-none transition-colors" onClick={() => handleSort('quantity')}>
+                  <div className="flex items-center gap-1">
+                    Qty <SortIcon column="quantity" />
                   </div>
                 </th>
-                <th className="px-6 py-4 border-b border-outline-variant/10">Price</th>
-                <th className="px-6 py-4 border-b border-outline-variant/10 cursor-pointer hover:bg-surface-container-high transition-colors" onClick={() => handleSort('amount')}>
-                  <div className="flex items-center gap-2">
+                <th className="px-2 py-3 border-b border-outline-variant/10">Price</th>
+                <th className="px-2 py-3 border-b border-outline-variant/10 cursor-pointer hover:bg-surface-container focus:outline-none transition-colors" onClick={() => handleSort('amount')}>
+                  <div className="flex items-center gap-1">
                     Total <SortIcon column="amount" />
                   </div>
                 </th>
-                <th className="px-6 py-4 border-b border-outline-variant/10 cursor-pointer hover:bg-surface-container-high transition-colors" onClick={() => handleSort('status')}>
-                  <div className="flex items-center gap-2">
-                    Status <SortIcon column="status" />
+                <th className="px-2 py-3 border-b border-outline-variant/10 cursor-pointer hover:bg-surface-container focus:outline-none transition-colors" onClick={() => handleSort('status')}>
+                  <div className="flex items-center gap-1">
+                    Stat <SortIcon column="status" />
                   </div>
                 </th>
-                <th className="px-6 py-4 border-b border-outline-variant/10 text-right">Actions</th>
+                <th className="px-2 py-3 border-b border-outline-variant/10 text-right">Act</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-outline-variant/10">
+            <tbody className="divide-y divide-outline-variant/5">
               {filteredEntries.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((entry, index) => (
-                <tr key={entry.id} className={cn("hover:bg-primary/5 transition-colors group", selectedIds.includes(entry.id) && "bg-primary/5")}>
-                  <td className="px-6 py-4">
+                <tr
+                  key={entry.id}
+                  onClick={() => {
+                    if (canWrite) openEditModal(entry);
+                  }}
+                  title={canWrite ? 'Click to edit or delete record' : undefined}
+                  className={cn(
+                    "hover:bg-primary/5 transition-colors group whitespace-nowrap",
+                    canWrite && "cursor-pointer",
+                    selectedIds.includes(entry.id) && "bg-primary/5"
+                  )}
+                >
+                  <td className="px-2 py-2" onClick={(e) => e.stopPropagation()}>
                     {canWrite && (
                       <input 
                         type="checkbox" 
@@ -1156,85 +1323,92 @@ export default function DailyRegister() {
                           if (e.target.checked) setSelectedIds([...selectedIds, entry.id]);
                           else setSelectedIds(selectedIds.filter(id => id !== entry.id));
                         }}
-                        className="rounded text-primary"
+                        className="rounded text-primary focus:ring-primary h-3.5 w-3.5"
                       />
                     )}
                   </td>
-                  <td className="px-6 py-4 text-sm font-medium text-on-surface-variant">{(currentPage - 1) * pageSize + index + 1}</td>
-                  <td className="px-6 py-4 text-sm">{safeFormat(entry.date, 'dd/MM/yyyy')}</td>
-                  <td className="px-6 py-4 text-sm font-bold">{mccs.find(m => m.id === entry.mccId)?.name || 'Unknown'}</td>
-                  <td className="px-6 py-4 text-sm font-medium">
-                    <div className="flex items-center gap-2 group relative">
-                      <span className="cursor-help border-b border-dotted border-outline-variant/50 group-hover:text-primary transition-colors">
-                        {entry.resolvedSellerName}
-                      </span>
-                      
-                      {/* Tooltip */}
-                      {entry.sellerDetails && (
-                        <div className="absolute bottom-full left-0 mb-2 hidden group-hover:block z-50">
-                          <div className="bg-on-surface text-surface text-[10px] p-2 rounded-lg shadow-xl min-w-[150px] border border-white/10">
-                            <p className="font-bold border-b border-white/10 pb-1 mb-1">{entry.resolvedSellerName}</p>
-                            <p className="opacity-80">Phone: {entry.sellerDetails.phone || 'N/A'}</p>
-                            <p className="opacity-80">MCC: {entry.sellerDetails?.mccIds ? entry.sellerDetails.mccIds.map((id: string) => mccs.find(m => m.id === id)?.name).filter(Boolean).join(', ') : 'N/A'}</p>
-                            <div className="absolute top-full left-4 border-8 border-transparent border-t-on-surface"></div>
+                  <td className="px-2 py-2 text-[10px] font-black text-on-surface-variant opacity-40 leading-none">{(currentPage - 1) * pageSize + index + 1}</td>
+                  <td className="px-2 py-2 text-[10px] font-bold tracking-tight">{safeFormat(entry.date, 'dd/MM/yy')}</td>
+                  <td className="px-2 py-2 text-[10px] font-black text-primary uppercase tracking-tighter truncate max-w-[80px]">{mccs.find(m => m.id === entry.mccId)?.name || 'Unknown'}</td>
+                  <td className="px-2 py-2 text-[11px]">
+                    <div className="flex flex-col">
+                      <div className="flex items-center gap-1 group/seller relative">
+                        <span className="font-black text-on-surface group-hover:text-primary transition-colors cursor-help border-b border-dotted border-outline-variant/50 truncate max-w-[120px]">
+                          {entry.resolvedSellerName}
+                        </span>
+                        
+                        {/* Tooltip */}
+                        {entry.sellerDetails && (
+                          <div className="absolute bottom-full left-0 mb-2 hidden group-hover/seller:block z-50">
+                            <div className="bg-on-surface text-surface text-[9px] p-2 rounded-xl shadow-2xl min-w-[150px] border border-white/10 animate-in fade-in slide-in-from-bottom-2">
+                              <p className="font-black text-[10px] border-b border-white/10 pb-1 mb-1">{entry.resolvedSellerName}</p>
+                              <div className="space-y-0.5 opacity-80 font-bold uppercase tracking-tighter text-[8px]">
+                                <p>Phone: {entry.sellerDetails.phone || 'N/A'}</p>
+                                <p>Category: {entry.sellerDetails.category || 'N/A'}</p>
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                      )}
-
-                      {entry.sellerId !== 'MANUAL' && (
-                        <button 
-                          onClick={() => handleViewPriceHistory(entry.sellerId)}
-                          className="p-1 text-on-surface-variant hover:text-primary transition-colors"
-                          title="View Price History"
-                        >
-                          <History size={14} />
-                        </button>
-                      )}
+                        )}
+                        <span className="text-[8px] font-black text-on-surface-variant opacity-40 uppercase">#{String(entry.sellerId || '').slice(-3) || '??'}</span>
+                        {(entry.sellerDetails?.phone || entry.manualSellerPhone) ? (
+                          <span className="text-[9px] font-bold text-primary/80 inline-flex items-center gap-0.5 ml-0.5">
+                            <Phone size={9} className="opacity-75" />
+                            {entry.sellerDetails?.phone || entry.manualSellerPhone}
+                          </span>
+                        ) : (
+                          <span className="text-[8px] font-medium text-on-surface-variant/40 ml-0.5">• No phone</span>
+                        )}
+                        {entry.sellerId !== 'MANUAL' && (
+                          <button 
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleViewPriceHistory(entry.sellerId);
+                            }}
+                            className="p-0.5 text-on-surface-variant hover:text-primary transition-colors opacity-60 group-hover:opacity-100"
+                            title="View Price History"
+                          >
+                            <History size={10} />
+                          </button>
+                        )}
+                      </div>
+                      {entry.manualSellerName && <span className="text-[7px] font-black uppercase text-secondary tracking-widest leading-none mt-0.5 whitespace-nowrap opacity-60">Direct Entry</span>}
                     </div>
                   </td>
-                  <td className="px-6 py-4 text-sm font-medium">{formatNumber(entry.quantity, 2)} {entry.unit}</td>
-                  <td className="px-6 py-4 text-sm font-medium">TSh {formatNumber(entry.pricePerUnit, 0)}</td>
-                  <td className="px-6 py-4 text-sm font-bold">TSh {formatNumber(entry.amount || (entry.quantity * entry.pricePerUnit), 0)}</td>
-                  <td className="px-6 py-4">
+                  <td className="px-2 py-2 text-[11px] font-black tracking-tight">{formatNumber(entry.quantity, 2, false, true)} L</td>
+                  <td className="px-2 py-2 text-[9px] font-bold text-on-surface-variant/60">@{formatNumber(entry.pricePerUnit, 2, true, true)}</td>
+                  <td className="px-2 py-2 text-[11px] font-black text-primary tracking-tight">{formatNumber(entry.amount || (entry.quantity * entry.pricePerUnit), 2, true, true)}</td>
+                  <td className="px-2 py-2 text-center">
                     <span className={cn(
-                      "px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-tighter",
+                      "px-1.5 py-0.5 rounded-full text-[8px] font-black uppercase tracking-tighter inline-flex items-center gap-1",
                       entry.status === 'PAID' ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"
                     )}>
+                      {entry.status === 'PAID' ? <Check size={8} /> : <Loader2 size={8} className="animate-spin" />}
                       {entry.status}
                     </span>
                   </td>
-                  <td className="px-6 py-4 text-right">
+                  <td className="px-2 py-2 text-right" onClick={(e) => e.stopPropagation()}>
                     {canWrite && (
-                      <div className="flex justify-end gap-2">
-                        <button onClick={() => {
-                          setFormData({
-                            sellerId: entry.sellerId === 'MANUAL' ? '' : entry.sellerId,
-                            manualSellerName: entry.manualSellerName || '',
-                            isManualSeller: entry.sellerId === 'MANUAL',
-                            mccId: entry.mccId,
-                            date: entry.date,
-                            quantity: entry.quantity.toString(),
-                            unit: entry.unit,
-                            pricePerUnit: entry.pricePerUnit.toString(),
-                            status: entry.status,
-                            remarks: entry.remarks || ''
-                          });
-                          setSellerSearch(entry.resolvedSellerName);
-                          setEditingId(entry.id);
-                          setIsAdding(true);
-                          window.scrollTo({ top: 0, behavior: 'smooth' });
-                        }} className="p-1 hover:text-primary transition-colors"><Edit2 size={16} /></button>
-                        <button 
-                          onClick={async () => {
-                            if (window.confirm('Are you sure you want to delete this entry?')) {
-                              deleteMutation.mutate(entry.id);
-                            }
-                          }} 
-                          disabled={deleteMutation.isPending}
-                          className="p-1 hover:text-error transition-colors disabled:opacity-50"
+                      <div className="flex justify-end gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
+                        <button
+                          type="button"
+                          onClick={() => openEditModal(entry)}
+                          title="Edit record"
+                          className="p-1.5 bg-surface-container-low hover:bg-primary/20 hover:text-primary rounded-lg transition-all"
                         >
-                          {deleteMutation.isPending && deleteMutation.variables === entry.id ? <Loader2 className="animate-spin" size={16} /> : <Trash2 size={16} />}
+                          <Edit2 size={12} />
                         </button>
+                        {canDelete && (
+                          <button 
+                            type="button"
+                            onClick={() => setEntryToDelete(entry)}
+                            disabled={deleteMutation.isPending}
+                            title="Delete record"
+                            className="p-1.5 bg-surface-container-low hover:bg-error/20 hover:text-error rounded-lg transition-all disabled:opacity-50"
+                          >
+                            {deleteMutation.isPending && deleteMutation.variables === entry.id ? <Loader2 className="animate-spin" size={12} /> : <Trash2 size={12} />}
+                          </button>
+                        )}
                       </div>
                     )}
                   </td>
@@ -1242,7 +1416,7 @@ export default function DailyRegister() {
               ))}
               {filteredEntries.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-6 py-10 text-center text-on-surface-variant italic">No records found matching your filters</td>
+                  <td colSpan={10} className="px-6 py-6 text-center text-on-surface-variant italic text-xs">No records found matching your filters</td>
                 </tr>
               )}
             </tbody>
@@ -1252,13 +1426,24 @@ export default function DailyRegister() {
         {/* Mobile Card View */}
         <div className="md:hidden divide-y divide-outline-variant/10">
           {filteredEntries.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((entry, index) => (
-            <div key={entry.id} className={cn("p-4 space-y-3", selectedIds.includes(entry.id) && "bg-primary/5")}>
+            <div
+              key={entry.id}
+              onClick={() => {
+                if (canWrite) openEditModal(entry);
+              }}
+              className={cn(
+                "p-4 space-y-3 transition-colors",
+                canWrite && "cursor-pointer hover:bg-primary/5",
+                selectedIds.includes(entry.id) && "bg-primary/5"
+              )}
+            >
               <div className="flex justify-between items-start">
                 <div className="flex items-center gap-3">
                   {canWrite && (
                     <input 
                       type="checkbox" 
                       checked={selectedIds.includes(entry.id)}
+                      onClick={(e) => e.stopPropagation()}
                       onChange={(e) => {
                         if (e.target.checked) setSelectedIds([...selectedIds, entry.id]);
                         else setSelectedIds(selectedIds.filter(id => id !== entry.id));
@@ -1267,7 +1452,18 @@ export default function DailyRegister() {
                     />
                   )}
                   <div className="group relative">
-                    <p className="text-sm font-bold cursor-help">{entry.resolvedSellerName}</p>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <p className="text-sm font-bold cursor-help">{entry.resolvedSellerName}</p>
+                      <span className="text-[10px] font-black text-on-surface-variant opacity-50 uppercase">
+                        #{String(entry.sellerId || '').slice(-3) || '??'}
+                      </span>
+                      {(entry.sellerDetails?.phone || entry.manualSellerPhone) && (
+                        <span className="text-[10px] font-bold text-primary/80 inline-flex items-center gap-0.5">
+                          <Phone size={10} />
+                          {entry.sellerDetails?.phone || entry.manualSellerPhone}
+                        </span>
+                      )}
+                    </div>
                     {/* Tooltip */}
                     {entry.sellerDetails && (
                       <div className="absolute bottom-full left-0 mb-2 hidden group-hover:block z-50">
@@ -1291,39 +1487,28 @@ export default function DailyRegister() {
               </div>
               <div className="flex justify-between items-end">
                 <div className="space-y-1">
-                  <p className="text-xs text-on-surface-variant">Quantity: <span className="font-bold text-on-surface">{formatNumber(entry.quantity, 2)} {entry.unit}</span></p>
-                  <p className="text-sm font-black text-primary">TSh {formatNumber(entry.amount || (entry.quantity * entry.pricePerUnit), 0)}</p>
+                  <p className="text-xs text-on-surface-variant">Quantity: <span className="font-bold text-on-surface">{formatNumber(entry.quantity, 2, false, true)} {entry.unit}</span></p>
+                  <p className="text-sm font-black text-primary">TSh {formatNumber(entry.amount || (entry.quantity * entry.pricePerUnit), 2, true, true)}</p>
                 </div>
                 {canWrite && (
-                  <div className="flex gap-2">
-                    <button onClick={() => {
-                      setFormData({
-                        sellerId: entry.sellerId === 'MANUAL' ? '' : entry.sellerId,
-                        manualSellerName: entry.manualSellerName || '',
-                        isManualSeller: entry.sellerId === 'MANUAL',
-                        mccId: entry.mccId,
-                        date: entry.date,
-                        quantity: entry.quantity.toString(),
-                        unit: entry.unit,
-                        pricePerUnit: entry.pricePerUnit.toString(),
-                        status: entry.status,
-                        remarks: entry.remarks || ''
-                      });
-                      setEditingId(entry.id);
-                      setIsAdding(true);
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
-                    }} className="p-2 bg-surface-container-low text-primary rounded-lg"><Edit2 size={16} /></button>
-                    <button 
-                      onClick={async () => {
-                        if (window.confirm('Are you sure you want to delete this entry?')) {
-                          deleteMutation.mutate(entry.id);
-                        }
-                      }} 
-                      disabled={deleteMutation.isPending}
-                      className="p-2 bg-surface-container-low text-error rounded-lg disabled:opacity-50"
+                  <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      onClick={() => openEditModal(entry)}
+                      className="p-2 bg-surface-container-low text-primary rounded-lg"
                     >
-                      {deleteMutation.isPending && deleteMutation.variables === entry.id ? <Loader2 className="animate-spin" size={16} /> : <Trash2 size={16} />}
+                      <Edit2 size={16} />
                     </button>
+                    {canDelete && (
+                      <button 
+                        type="button"
+                        onClick={() => setEntryToDelete(entry)}
+                        disabled={deleteMutation.isPending}
+                        className="p-2 bg-surface-container-low text-error rounded-lg disabled:opacity-50"
+                      >
+                        {deleteMutation.isPending && deleteMutation.variables === entry.id ? <Loader2 className="animate-spin" size={16} /> : <Trash2 size={16} />}
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -1396,7 +1581,7 @@ export default function DailyRegister() {
         title="Import Daily Register"
         templateFileName="Daily_Register_Template.xlsx"
         templateData={[
-          { Date: '2024-01-01', MCC: 'MCC Name or ID', Seller: 'Seller Name or ID', Quantity: 10.5, Unit: 'Litres', Price: 1200, Status: 'PAID', Remarks: '' }
+          { Date: getSystemStartDate(), MCC: 'MCC Name or ID', Seller: 'Seller Name or ID', Quantity: 10.5, Unit: 'Litres', Price: 1200, Status: 'PAID', Remarks: '' }
         ]}
         expectedColumns={['Date', 'MCC', 'Seller', 'Quantity']}
       />

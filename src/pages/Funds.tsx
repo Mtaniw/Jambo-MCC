@@ -19,14 +19,25 @@ import {
   Share2,
   Calendar,
   Filter,
-  Loader2
+  Loader2,
+  Check,
+  Image as ImageIcon,
+  AlertCircle
 } from 'lucide-react';
 import { cn, formatNumber } from '../lib/utils';
 import { format, startOfMonth } from 'date-fns';
-import { getTanzaniaTodayStr, safeFormat } from '../lib/dateUtils';
+import { getTanzaniaTodayStr, safeFormat, getSystemStartDate } from '../lib/dateUtils';
 import { DateInput } from '../components/DateInput';
 import { handleFirestoreError, OperationType } from '../lib/errorHandlers';
 import { ImportModal } from '../components/ImportModal';
+import { Modal } from '../components/Modal';
+import { ReceiptUploadField } from '../components/ReceiptUploadField';
+import {
+  PreparedReceipt,
+  uploadReceiptToFirestore,
+  downloadReceiptFromFirestore,
+  deleteReceiptFromFirestore,
+} from '../lib/receiptStorage';
 import { Upload } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -47,11 +58,17 @@ export default function Funds() {
   const [showImportModal, setShowImportModal] = useState(false);
   const [selectedMccId, setSelectedMccId] = useState<string>('all');
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
-  const [startDate, setStartDate] = useState<string>('2024-01-01');
+  const [startDate, setStartDate] = useState<string>(getSystemStartDate());
   const [endDate, setEndDate] = useState<string>(getTanzaniaTodayStr());
+  const [pendingReceipt, setPendingReceipt] = useState<PreparedReceipt | null>(null);
+  const [removeExistingReceipt, setRemoveExistingReceipt] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const isGlobalViewer = profile && ['Super User', 'Admin', 'Factory Clerk', 'Supervisor', 'Manager', 'Director'].includes(effectiveRole as string);
-  const canWrite = profile && (profile.role === 'Admin' || !['Supervisor', 'Manager', 'Director'].includes(effectiveRole as string));
+  const isActualAdmin = profile && (profile.role === 'Admin' || profile.role === 'Super User');
+  const isGlobalViewer = isActualAdmin || (profile && ['Super User', 'Admin', 'Factory Clerk', 'Supervisor', 'Manager', 'Director'].includes(effectiveRole as string));
+  const canWrite = isActualAdmin || (profile && !['Supervisor', 'Manager', 'Director'].includes(effectiveRole as string));
 
   const [formData, setFormData] = useState({
     mccId: '',
@@ -133,30 +150,106 @@ export default function Funds() {
     return { totalReceived, totalExpenses, totalMilk, totalExpenditure, netBalance };
   }, [funds, expenses, milkPurchases, selectedMccId]);
 
+  const resetModalState = () => {
+    setIsAdding(false);
+    setEditingFund(null);
+    setPendingReceipt(null);
+    setRemoveExistingReceipt(false);
+    setActionError(null);
+    setFormData(prev => ({
+      ...prev,
+      sender: '',
+      purpose: '',
+      refNo: '',
+      amountReceived: '',
+      amountUsed: '0',
+      notes: ''
+    }));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const balance = Number(formData.amountReceived) - Number(formData.amountUsed);
-    const data = {
-      ...formData,
-      amountReceived: Number(formData.amountReceived),
-      amountUsed: Number(formData.amountUsed),
-      balance,
-      updatedAt: new Date().toISOString()
-    };
+    if (!canWrite || isSaving) return;
+    setIsSaving(true);
+    setActionError(null);
 
-    if (editingFund) {
-      await updateDoc(doc(db, 'money_received', editingFund.id), data);
-      setEditingFund(null);
-    } else {
-      await addDoc(collection(db, 'money_received'), {
-        ...data,
-        createdAt: new Date().toISOString(),
-        recordedBy: profile?.email
-      });
+    try {
+      const balance = Number(formData.amountReceived) - Number(formData.amountUsed);
+      let receiptFields: Record<string, any> = {};
+      const oldReceiptFileId = editingFund?.receiptFileId;
+
+      if (pendingReceipt) {
+        const uploadedMeta = await uploadReceiptToFirestore(
+          pendingReceipt,
+          'money_received',
+          profile?.fullName || profile?.email || 'System'
+        );
+        receiptFields = uploadedMeta;
+      } else if (removeExistingReceipt) {
+        receiptFields = {
+          receiptFileId: null,
+          receiptFileName: null,
+          receiptFileType: null,
+          receiptFileSize: null,
+        };
+      } else if (oldReceiptFileId) {
+        receiptFields = {
+          receiptFileId: editingFund.receiptFileId,
+          receiptFileName: editingFund.receiptFileName || '',
+          receiptFileType: editingFund.receiptFileType || '',
+          receiptFileSize: editingFund.receiptFileSize || 0,
+        };
+      }
+
+      const data = {
+        ...formData,
+        amountReceived: Number(formData.amountReceived),
+        amountUsed: Number(formData.amountUsed),
+        balance,
+        ...receiptFields,
+        updatedAt: new Date().toISOString()
+      };
+
+      if (editingFund) {
+        try {
+          await updateDoc(doc(db, 'money_received', editingFund.id), data);
+        } catch (err) {
+          handleFirestoreError(err, OperationType.UPDATE, `money_received/${editingFund.id}`);
+        }
+        if (oldReceiptFileId && (pendingReceipt || removeExistingReceipt)) {
+          await deleteReceiptFromFirestore(oldReceiptFileId);
+        }
+      } else {
+        try {
+          await addDoc(collection(db, 'money_received'), {
+            ...data,
+            createdAt: new Date().toISOString(),
+            recordedBy: profile?.fullName || profile?.email || 'System'
+          });
+        } catch (err) {
+          handleFirestoreError(err, OperationType.CREATE, 'money_received');
+        }
+      }
+
+      resetModalState();
+    } catch (err: any) {
+      setActionError(err?.message || 'Failed to save fund record.');
+    } finally {
+      setIsSaving(false);
     }
-    
-    setIsAdding(false);
-    setFormData({ ...formData, sender: '', purpose: '', refNo: '', amountReceived: '', amountUsed: '0', notes: '' });
+  };
+
+  const handleDownloadReceipt = async (fund: any) => {
+    if (!fund.receiptFileId) return;
+    setDownloadingId(fund.id);
+    setActionError(null);
+    try {
+      await downloadReceiptFromFirestore(fund.receiptFileId, fund.receiptFileName);
+    } catch (err: any) {
+      setActionError(err?.message || 'Failed to download fund receipt.');
+    } finally {
+      setDownloadingId(null);
+    }
   };
 
   const exportToExcel = () => {
@@ -198,7 +291,7 @@ export default function Funds() {
       if (navigator.share) {
         await navigator.share({
           title: `Funds Received Report - ${settings.systemName || 'MCC System'}`,
-          text: `Financial reconciliation from ${startDate} to ${endDate}. Net Balance: TSh ${formatNumber(reconciliation.netBalance, 0)}`,
+          text: `Financial reconciliation from ${startDate} to ${endDate}. Net Balance: TSh ${formatNumber(reconciliation.netBalance, 2, true, true)}`,
           url: window.location.href
         });
       } else {
@@ -229,7 +322,7 @@ export default function Funds() {
         balance: amount,
         notes: row.Notes || 'Imported',
         createdAt: now,
-        recordedBy: profile?.email
+        recordedBy: profile?.fullName || profile?.email || 'System'
       });
     }
   };
@@ -292,12 +385,20 @@ export default function Funds() {
             </button>
           )}
           {canWrite && (
-            <button onClick={() => setIsAdding(!isAdding)} className="bg-primary text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 shadow-lg">
+            <button onClick={() => { if (isAdding) { resetModalState(); } else { setEditingFund(null); setPendingReceipt(null); setRemoveExistingReceipt(false); setActionError(null); setIsAdding(true); } }} className="bg-primary text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 shadow-lg">
               {isAdding ? <X size={18} /> : <Plus size={18} />} {isAdding ? 'Cancel' : 'Add Fund Record'}
             </button>
           )}
         </div>
       </div>
+
+      {actionError && (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl flex items-center gap-2 print:hidden">
+          <AlertCircle size={18} />
+          <span className="text-sm font-medium">{actionError}</span>
+          <button onClick={() => setActionError(null)} className="ml-auto"><X size={16} /></button>
+        </div>
+      )}
 
       <div ref={reportRef} className="space-y-6 print:p-0">
         <div className="hidden print:block mb-8 border-b pb-4">
@@ -314,38 +415,38 @@ export default function Funds() {
             <div className="p-2 bg-green-50 rounded-lg text-green-600"><ArrowDownCircle size={20} /></div>
             <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant flex-1">Funds Received</span>
           </div>
-          <p className="text-xl font-black text-green-600">TSh {formatNumber(reconciliation.totalReceived, 0)}</p>
+          <p className="text-xl font-black text-green-600">TSh {formatNumber(reconciliation.totalReceived, 2, true, true)}</p>
         </div>
         <div className="bg-white p-6 rounded-xl border border-outline-variant/20 shadow-sm transition-all hover:shadow-md">
           <div className="flex items-center gap-3 mb-4">
             <div className="p-2 bg-orange-50 rounded-lg text-orange-600"><Receipt size={20} /></div>
             <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant flex-1">Expenses</span>
           </div>
-          <p className="text-xl font-black text-orange-600">TSh {formatNumber(reconciliation.totalExpenses, 0)}</p>
+          <p className="text-xl font-black text-orange-600">TSh {formatNumber(reconciliation.totalExpenses, 2, true, true)}</p>
         </div>
         <div className="bg-white p-6 rounded-xl border border-outline-variant/20 shadow-sm transition-all hover:shadow-md">
           <div className="flex items-center gap-3 mb-4">
             <div className="p-2 bg-blue-50 rounded-lg text-blue-600"><Milk size={20} /></div>
             <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant flex-1">Milk Purchases</span>
           </div>
-          <p className="text-xl font-black text-blue-600">TSh {formatNumber(reconciliation.totalMilk, 0)}</p>
+          <p className="text-xl font-black text-blue-600">TSh {formatNumber(reconciliation.totalMilk, 2, true, true)}</p>
         </div>
         <div className="bg-white p-6 rounded-xl border border-outline-variant/20 shadow-sm transition-all hover:shadow-md">
           <div className="flex items-center gap-3 mb-4">
             <div className="p-2 bg-purple-50 rounded-lg text-purple-600"><ArrowUpCircle size={20} /></div>
             <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant flex-1">Total Expenditure</span>
           </div>
-          <p className="text-xl font-black text-purple-600">TSh {formatNumber(reconciliation.totalExpenditure, 0)}</p>
+          <p className="text-xl font-black text-purple-600">TSh {formatNumber(reconciliation.totalExpenditure, 2, true, true)}</p>
         </div>
         <div className={cn(
           "p-6 rounded-xl border shadow-lg transition-all hover:scale-[1.02] cursor-default",
-          reconciliation.netBalance >= 0 ? "bg-primary text-white border-primary" : "bg-error text-white border-error"
+          reconciliation.netBalance >= 0 ? "bg-green-600 text-white border-green-600" : "bg-red-600 text-white border-red-600"
         )}>
           <div className="flex items-center gap-3 mb-4">
             <div className="p-2 bg-white/20 rounded-lg"><Calculator size={20} /></div>
             <span className="text-[10px] font-bold uppercase tracking-wider opacity-80 flex-1">Net Balance</span>
           </div>
-          <p className="text-2xl font-black">TSh {formatNumber(reconciliation.netBalance, 0)}</p>
+          <p className="text-2xl font-black">TSh {formatNumber(reconciliation.netBalance, 2, true, true)}</p>
           <p className="text-[8px] mt-2 opacity-60">Reconciliation: Received - Total Expenditure</p>
         </div>
       </div>
@@ -384,65 +485,142 @@ export default function Funds() {
         </div>
       </div>
 
-      {(isAdding || editingFund) && (
-        <form onSubmit={handleSubmit} className="bg-white p-6 rounded-xl border border-outline-variant/20 shadow-sm grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 animate-in fade-in slide-in-from-top-4">
-          <div className="lg:col-span-3 flex justify-between items-center mb-2">
-            <h3 className="font-bold text-primary">{editingFund ? 'Edit Fund Record' : 'Add New Fund Record'}</h3>
-            <button type="button" onClick={() => { setIsAdding(false); setEditingFund(null); }} className="text-on-surface-variant hover:text-error transition-colors"><X size={20} /></button>
+      <Modal
+        isOpen={isAdding || !!editingFund}
+        onClose={resetModalState}
+        title={editingFund ? "Edit Fund Record" : "Record Funds Received"}
+        icon={<ArrowDownCircle size={20} />}
+        maxWidth="max-w-3xl"
+      >
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-1">
+              <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Recipient Station (MCC)</label>
+              <select 
+                value={formData.mccId} 
+                onChange={e => setFormData({...formData, mccId: e.target.value})} 
+                className="w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-black transition-all" 
+                required
+              >
+                {mccs.map(mcc => <option key={mcc.id} value={mcc.id}>{mcc.name}</option>)}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <DateInput 
+                value={formData.date} 
+                onChange={val => setFormData({...formData, date: val})}
+                label="Date Received"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Source / Sender</label>
+              <input 
+                placeholder="e.g. Jambo Food Products HQ" 
+                value={formData.sender} 
+                onChange={e => setFormData({...formData, sender: e.target.value})} 
+                className="w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-black" 
+                required 
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Fund Purpose</label>
+              <input 
+                placeholder="e.g. Weekly Operations" 
+                value={formData.purpose} 
+                onChange={e => setFormData({...formData, purpose: e.target.value})} 
+                className="w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-black" 
+                required 
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Allocated For</label>
+              <select 
+                value={formData.use} 
+                onChange={e => setFormData({...formData, use: e.target.value})} 
+                className="w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-black transition-all" 
+                required
+              >
+                <option value="Milk Purchase">Milk Purchase</option>
+                <option value="Station Expenses">Station Expenses</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Transaction Ref No.</label>
+              <input 
+                placeholder="Bank Ref / Mobile Ref" 
+                value={formData.refNo} 
+                onChange={e => setFormData({...formData, refNo: e.target.value})} 
+                className="w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-black" 
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Payment Mode</label>
+              <select 
+                value={formData.mode} 
+                onChange={e => setFormData({...formData, mode: e.target.value})} 
+                className="w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-black transition-all"
+              >
+                <option value="Bank Transfer">Bank Transfer</option>
+                <option value="Mobile Money">Mobile Money</option>
+                <option value="Cash">Cash</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Amount Received (TSh)</label>
+              <div className="relative">
+                <input 
+                  type="number" 
+                  placeholder="0" 
+                  value={formData.amountReceived} 
+                  onChange={e => setFormData({...formData, amountReceived: e.target.value})} 
+                  className="w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-black" 
+                  required 
+                />
+                <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-black opacity-20 uppercase tracking-widest">TSH</div>
+              </div>
+            </div>
           </div>
+          
           <div className="space-y-1">
-            <label className="text-xs font-bold uppercase tracking-wider">MCC</label>
-            <select value={formData.mccId} onChange={e => setFormData({...formData, mccId: e.target.value})} className="w-full bg-surface-container-low border-none rounded-lg p-2 text-sm" required>
-              {mccs.map(mcc => <option key={mcc.id} value={mcc.id}>{mcc.name}</option>)}
-            </select>
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-bold uppercase tracking-wider">Sender</label>
-            <input placeholder="Sender (e.g. Jambo HQ)" value={formData.sender} onChange={e => setFormData({...formData, sender: e.target.value})} className="w-full bg-surface-container-low border-none rounded-lg p-2 text-sm" required />
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-bold uppercase tracking-wider">Purpose</label>
-            <input placeholder="Purpose" value={formData.purpose} onChange={e => setFormData({...formData, purpose: e.target.value})} className="w-full bg-surface-container-low border-none rounded-lg p-2 text-sm" required />
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-bold uppercase tracking-wider">Primary Use</label>
-            <select value={formData.use} onChange={e => setFormData({...formData, use: e.target.value})} className="w-full bg-surface-container-low border-none rounded-lg p-2 text-sm" required>
-              <option value="Milk Purchase">Milk Purchase</option>
-              <option value="Station Expenses">Station Expenses</option>
-              <option value="Other">Other</option>
-            </select>
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-bold uppercase tracking-wider">Ref No.</label>
-            <input placeholder="Ref No." value={formData.refNo} onChange={e => setFormData({...formData, refNo: e.target.value})} className="w-full bg-surface-container-low border-none rounded-lg p-2 text-sm" />
-          </div>
-          <div className="space-y-1">
-            <DateInput 
-              value={formData.date} 
-              onChange={val => setFormData({...formData, date: val})}
-              label="Date"
+            <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Internal Notes</label>
+            <textarea 
+              value={formData.notes} 
+              onChange={e => setFormData({...formData, notes: e.target.value})} 
+              className="w-full bg-surface-container-low border-none rounded-xl text-sm h-20 p-4 font-medium" 
+              placeholder="Any additional details..." 
             />
           </div>
-          <div className="space-y-1">
-            <label className="text-xs font-bold uppercase tracking-wider">Mode</label>
-            <select value={formData.mode} onChange={e => setFormData({...formData, mode: e.target.value})} className="w-full bg-surface-container-low border-none rounded-lg p-2 text-sm">
-              <option value="Bank Transfer">Bank Transfer</option>
-              <option value="Mobile Money">Mobile Money</option>
-              <option value="Cash">Cash</option>
-            </select>
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-bold uppercase tracking-wider">Amount Received (TSh)</label>
-            <input type="number" placeholder="Amount Received" value={formData.amountReceived} onChange={e => setFormData({...formData, amountReceived: e.target.value})} className="w-full bg-surface-container-low border-none rounded-lg p-2 text-sm" required />
-          </div>
-          <div className="lg:col-span-3 flex justify-end gap-3 mt-2">
-            <button type="button" onClick={() => { setIsAdding(false); setEditingFund(null); }} className="px-6 py-2 rounded-lg font-bold text-on-surface-variant hover:bg-surface-container-low transition-all">Cancel</button>
-            <button type="submit" className="bg-primary text-white px-8 py-2 rounded-lg font-bold shadow-lg">
-              {editingFund ? 'Update Record' : 'Save Record'}
+
+          <ReceiptUploadField
+            label="Fund Receipt (PDF or Image — Optional)"
+            pendingReceipt={pendingReceipt}
+            onSelectReceipt={setPendingReceipt}
+            existingReceipt={editingFund}
+            removeExisting={removeExistingReceipt}
+            onToggleRemoveExisting={setRemoveExistingReceipt}
+          />
+
+          <div className="flex justify-end gap-3 pt-6 border-t border-outline-variant/10">
+            <button 
+              type="button" 
+              onClick={resetModalState}
+              disabled={isSaving}
+              className="px-8 py-3 rounded-[1.25rem] font-black text-on-surface-variant hover:bg-surface-container-high transition-all uppercase text-[10px] tracking-widest disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button 
+              type="submit" 
+              disabled={isSaving}
+              className="bg-primary text-white px-12 py-3 rounded-[1.25rem] font-black shadow-lg shadow-primary/20 hover:shadow-primary/40 transition-all uppercase text-[10px] tracking-widest flex items-center gap-2 disabled:opacity-50"
+            >
+              {isSaving ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}
+              {isSaving ? 'Saving...' : (editingFund ? 'Update Record' : 'Save Record')}
             </button>
           </div>
         </form>
-      )}
+      </Modal>
 
       <div className="bg-white rounded-xl border border-outline-variant/20 shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b border-outline-variant/20 flex justify-between items-center">
@@ -452,6 +630,7 @@ export default function Funds() {
         <table className="w-full text-left">
           <thead className="bg-surface-container-low text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">
             <tr>
+              <th className="px-6 py-3 w-10">#</th>
               <th className="px-6 py-3">Date</th>
               <th className="px-6 py-3">MCC</th>
               <th className="px-6 py-3">Sender</th>
@@ -469,19 +648,46 @@ export default function Funds() {
                 let comparison = dateA - dateB;
                 if (comparison === 0) comparison = new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
                 return sortOrder === 'desc' ? -comparison : comparison;
-              }).map(fund => (
+              }).map((fund, index) => (
               <tr key={fund.id} className="hover:bg-surface-container-lowest transition-colors">
+                <td className="px-6 py-4 text-[10px] font-black text-on-surface-variant opacity-30">{index + 1}</td>
                 <td className="px-6 py-4 text-sm font-bold">{safeFormat(fund.date, 'dd/MM/yyyy')}</td>
                 <td className="px-6 py-4 text-sm">{mccs.find(m => m.id === fund.mccId)?.name || 'Unknown'}</td>
                 <td className="px-6 py-4 text-sm font-medium">{fund.sender}</td>
-                <td className="px-6 py-4 text-sm text-on-surface-variant">{fund.refNo || '-'}</td>
-                <td className="px-6 py-4 text-sm font-black text-green-600">TSh {formatNumber(fund.amountReceived, 0)}</td>
+                <td className="px-6 py-4 text-sm text-on-surface-variant">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span>{fund.refNo || '-'}</span>
+                    {fund.receiptFileId && (
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadReceipt(fund)}
+                        disabled={downloadingId === fund.id}
+                        title={`Download ${fund.receiptFileName || 'receipt'}`}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-primary/10 text-primary hover:bg-primary/20 text-[10px] font-bold uppercase tracking-wider transition-colors cursor-pointer disabled:opacity-50 print:hidden"
+                      >
+                        {downloadingId === fund.id ? (
+                          <Loader2 size={12} className="animate-spin" />
+                        ) : fund.receiptFileType === 'application/pdf' || (fund.receiptFileName || '').toLowerCase().endsWith('.pdf') ? (
+                          <FileText size={12} />
+                        ) : (
+                          <ImageIcon size={12} />
+                        )}
+                        <span>{fund.receiptFileType === 'application/pdf' || (fund.receiptFileName || '').toLowerCase().endsWith('.pdf') ? 'PDF' : 'IMG'}</span>
+                        <Download size={11} />
+                      </button>
+                    )}
+                  </div>
+                </td>
+                <td className="px-6 py-4 text-sm font-black text-green-600">TSh {formatNumber(fund.amountReceived, 2, true, true)}</td>
                 {canWrite && (
                   <td className="px-6 py-4 text-right print:hidden">
                     <div className="flex justify-end gap-2">
                       <button 
                         onClick={() => {
                           setEditingFund(fund);
+                          setPendingReceipt(null);
+                          setRemoveExistingReceipt(false);
+                          setActionError(null);
                           setFormData({
                             mccId: fund.mccId,
                             sender: fund.sender,
@@ -501,7 +707,19 @@ export default function Funds() {
                       >
                         <Edit2 size={16} />
                       </button>
-                      <button onClick={async () => { if(window.confirm('Delete this record?')) await deleteDoc(doc(db, 'money_received', fund.id)); }} className="text-error p-1 hover:bg-red-50 rounded transition-colors"><Trash2 size={16} /></button>
+                      {isActualAdmin && (
+                        <button
+                          onClick={async () => {
+                            if (window.confirm('Delete this record?')) {
+                              if (fund.receiptFileId) await deleteReceiptFromFirestore(fund.receiptFileId);
+                              await deleteDoc(doc(db, 'money_received', fund.id));
+                            }
+                          }}
+                          className="text-error p-1 hover:bg-red-50 rounded transition-colors"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
                     </div>
                   </td>
                 )}
@@ -509,7 +727,7 @@ export default function Funds() {
             ))}
             {funds.length === 0 && (
               <tr>
-                <td colSpan={canWrite ? 6 : 5} className="px-6 py-10 text-center text-on-surface-variant italic">No financial records found for this period.</td>
+                <td colSpan={canWrite ? 7 : 6} className="px-6 py-10 text-center text-on-surface-variant italic">No financial records found for this period.</td>
               </tr>
             )}
           </tbody>
@@ -524,7 +742,7 @@ export default function Funds() {
         title="Import Financial Records"
         templateFileName="Financial_Reconciliation_Template.xlsx"
         templateData={[
-          { Date: '2024-01-01', MCC: 'MCC Name or ID', Sender: 'Jambo HQ', Purpose: 'Milk Payment', Use: 'Milk Purchase', Amount: 5000000, Mode: 'Bank Transfer', RefNo: 'REF123', Notes: '' }
+          { Date: getSystemStartDate(), MCC: 'MCC Name or ID', Sender: 'Jambo HQ', Purpose: 'Milk Payment', Use: 'Milk Purchase', Amount: 5000000, Mode: 'Bank Transfer', RefNo: 'REF123', Notes: '' }
         ]}
         expectedColumns={['Date', 'MCC', 'Amount']}
       />

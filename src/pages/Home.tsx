@@ -7,6 +7,7 @@ import {
   AlertTriangle, 
   FileText, 
   LayoutDashboard,
+  Settings,
   ChevronRight,
   Clock,
   ArrowUpRight,
@@ -17,7 +18,7 @@ import {
   X,
   FileSearch
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { collection, query, where, onSnapshot, limit, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -27,6 +28,16 @@ import { cn, formatNumber } from '../lib/utils';
 
 export default function Home() {
   const { profile, effectiveRole } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    // Automatically redirect Super Users/Admins to Admin panel if they land on Home
+    const isPrimaryAdmin = profile?.email?.toLowerCase() === 'mtaniwambura@gmail.com';
+    if (effectiveRole === 'Super User' || effectiveRole === 'Admin' || isPrimaryAdmin) {
+      navigate('/admin');
+    }
+  }, [effectiveRole, profile, navigate]);
+
   const [todayStats, setTodayStats] = useState({
     litres: 0,
     rejects: 0,
@@ -55,9 +66,9 @@ export default function Home() {
       setSellers(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
 
-    // Stats Listener
+    // Stats Listener - All time
     const unsubStats = onSnapshot(
-      query(collection(db, 'daily_register'), where('date', '==', todayStr)),
+      query(collection(db, 'daily_register')),
       (snap) => {
         let total = 0;
         const uniqueSellers = new Set();
@@ -70,9 +81,9 @@ export default function Home() {
       }
     );
 
-    // Factory Intake Stats Listener
+    // Truck QA Stats Listener
     const unsubFactoryStats = onSnapshot(
-      query(collection(db, 'factory_intake'), where('date', '==', todayStr)),
+      query(collection(db, 'truck_qa')),
       (snap) => {
         let sent = 0;
         let received = 0;
@@ -111,8 +122,8 @@ export default function Home() {
             id: doc.id,
             ...data,
             type: 'Collection',
-            title: `New collection: ${data.quantity}L`,
-            subtitle: data.resolvedSellerName || data.sellerName || seller?.name || 'Unknown Seller',
+            title: data.date ? format(new Date(data.date), 'dd/MM/yyyy') : 'Collection Recorded',
+            subtitle: `${data.quantity}L from ${data.resolvedSellerName || data.sellerName || seller?.name || 'Unknown Seller'}`,
             time: data.createdAt ? new Date(data.createdAt) : new Date(),
             icon: ClipboardList,
             color: 'text-primary'
@@ -129,12 +140,16 @@ export default function Home() {
     { name: 'Daily Register', path: '/daily-register', icon: ClipboardList, desc: 'Record milk from sellers', roles: ['Super User', 'Admin', 'Cashier', 'Quality Controller', 'Supervisor'] },
     { name: 'Truck & QA', path: '/truck-qa', icon: Truck, desc: 'Quality control & dispatch', roles: ['Super User', 'Admin', 'Quality Controller', 'Supervisor'] },
     { name: 'Milk Cans', path: '/milk-cans', icon: Milk, desc: 'Manage container inventory', roles: ['Super User', 'Admin', 'Cashier', 'Quality Controller'] },
+    { name: 'Admin Control', path: '/admin', icon: Settings, desc: 'System configuration & users', roles: ['Super User', 'Admin'] },
     { name: 'Reports', path: '/reports', icon: FileText, desc: 'View analytics & summaries', roles: ['Super User', 'Admin', 'Cashier', 'Supervisor', 'Manager', 'Director'] },
-  ].filter(item => !item.roles || item.roles.includes(effectiveRole as string));
+  ].filter(item => {
+    const isPrimaryAdmin = profile?.email?.toLowerCase() === 'mtaniwambura@gmail.com';
+    return isPrimaryAdmin || !item.roles || item.roles.includes(effectiveRole as string);
+  });
 
   const stats = [
-    { label: "Today's Volume", value: `${formatNumber(todayStats.litres, 2)} L`, icon: Milk, color: "text-primary", bg: "bg-primary/5" },
-    { label: "Active Sellers", value: `${todayStats.sellers} Active`, icon: Users, color: "text-secondary", bg: "bg-secondary/5" },
+    { label: "Total Volume", value: `${formatNumber(todayStats.litres, 2)} L`, icon: Milk, color: "text-primary", bg: "bg-primary/5" },
+    { label: "Total Active Sellers", value: `${todayStats.sellers} Active`, icon: Users, color: "text-secondary", bg: "bg-secondary/5" },
     { label: "Quality Status", value: "Verified", icon: Activity, color: "text-green-600", bg: "bg-green-50" },
     { label: "Sent (Dispatched)", value: `${formatNumber(todayStats.sentLitres, 2)} L`, icon: Truck, color: "text-primary", bg: "bg-primary/5" },
     { label: "Received (Actual)", value: `${formatNumber(todayStats.receivedLitres, 2)} L`, icon: CheckCircle2, color: "text-green-600", bg: "bg-green-50" },
@@ -316,9 +331,9 @@ export default function Home() {
               )}
             </div>
             <div className="p-4 bg-surface-container-low/50">
-              <button className="w-full py-2 text-xs font-bold text-primary hover:bg-white rounded-xl transition-colors">
+              <Link to="/daily-register" className="block w-full py-2 text-xs font-bold text-primary hover:bg-white rounded-xl transition-colors text-center">
                 View Full Logs
-              </button>
+              </Link>
             </div>
           </section>
         </div>

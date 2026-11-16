@@ -3,12 +3,13 @@ import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, deleteDoc
 import { db } from '../firebase';
 import { useAuth } from '../hooks/useAuth';
 import { handleFirestoreError, OperationType } from '../lib/errorHandlers';
-import { Plus, Trash2, Edit2, X, Save, Search, Filter, Milk, Package, ArrowRight, History, AlertTriangle } from 'lucide-react';
+import { Plus, Trash2, Edit2, X, Save, Search, Filter, Milk, Package, ArrowRight, History, AlertTriangle, Check } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { format, startOfMonth } from 'date-fns';
 import { getTanzaniaTodayStr, safeFormat, getTanzaniaDate } from '../lib/dateUtils';
 import { DateInput } from '../components/DateInput';
 import { TypeAhead } from '../components/TypeAhead';
+import { Modal } from '../components/Modal';
 
 export default function MilkCans() {
   const { profile, effectiveRole } = useAuth();
@@ -31,8 +32,9 @@ export default function MilkCans() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const hasCleanedUp = React.useRef(false);
 
-  const isGlobalViewer = profile && ['Super User', 'Admin', 'Factory Clerk', 'Supervisor', 'Manager', 'Director', 'Viewer'].includes(effectiveRole as string);
-  const canWrite = profile && (profile.role === 'Admin' || ['Super User', 'Admin', 'Cashier', 'Quality Controller', 'Supervisor'].includes(effectiveRole as string));
+  const isActualAdmin = profile && ['Admin', 'Super User'].includes(profile.role);
+  const isGlobalViewer = isActualAdmin || (profile && ['Factory Clerk', 'Supervisor', 'Manager', 'Director', 'Viewer'].includes(effectiveRole as string));
+  const canWrite = isActualAdmin || (profile && ['Cashier', 'Quality Controller', 'Supervisor'].includes(effectiveRole as string));
 
   const [formData, setFormData] = useState({
     mccId: '',
@@ -261,7 +263,7 @@ export default function MilkCans() {
     const data = {
       ...formData,
       quantity: Number(formData.quantity),
-      issuedBy: profile?.fullName,
+      issuedBy: profile?.fullName || profile?.email || 'System',
       updatedAt: new Date().toISOString()
     };
 
@@ -400,80 +402,93 @@ export default function MilkCans() {
         </div>
       </div>
 
-      {/* Inventory Management Form */}
-      {isManagingInventory && (
-        <form onSubmit={handleInventorySubmit} className="bg-white p-6 rounded-xl border-2 border-primary/20 shadow-lg space-y-6 animate-in fade-in slide-in-from-top-4">
-          <div className="flex items-center gap-2 text-primary font-bold mb-2">
-            <Package size={20} /> Update Milk Can Inventory (Total Stock)
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+      {/* Inventory Management Modal */}
+      <Modal
+        isOpen={isManagingInventory}
+        onClose={() => {
+          setIsManagingInventory(false);
+          setInventoryMessage(null);
+        }}
+        title="Milk Can Master Stock Management"
+        icon={<Package size={20} />}
+        maxWidth="max-w-2xl"
+      >
+        <form onSubmit={handleInventorySubmit} className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-1">
-              <label className="text-xs font-bold uppercase tracking-wider">MCC</label>
-              <select value={inventoryForm.mccId} onChange={e => setInventoryForm({...inventoryForm, mccId: e.target.value})} className="w-full bg-surface-container-low border-none rounded-lg text-sm" required>
+              <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">MCC Station</label>
+              <select 
+                value={inventoryForm.mccId} 
+                onChange={e => setInventoryForm({...inventoryForm, mccId: e.target.value})} 
+                className="w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-black transition-all" 
+                required
+              >
                 {mccs.map(mcc => <option key={mcc.id} value={mcc.id}>{mcc.name}</option>)}
               </select>
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-bold uppercase tracking-wider">Capacity</label>
-              <select value={inventoryForm.capacity} onChange={e => setInventoryForm({...inventoryForm, capacity: e.target.value})} className="w-full bg-surface-container-low border-none rounded-lg text-sm">
+              <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Can Capacity</label>
+              <select 
+                value={inventoryForm.capacity} 
+                onChange={e => setInventoryForm({...inventoryForm, capacity: e.target.value})} 
+                className="w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-black transition-all"
+              >
                 <option value="30L">30L</option>
                 <option value="50L">50L</option>
               </select>
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-bold uppercase tracking-wider">Total Cans in Stock</label>
-              <input 
-                type="number" 
-                value={inventoryForm.totalQuantity} 
-                onChange={e => setInventoryForm({...inventoryForm, totalQuantity: e.target.value})} 
-                className="w-full bg-surface-container-low border-none rounded-lg text-sm" 
-                placeholder="Enter total quantity owned"
-                required 
-              />
+              <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Total Owned Stock Qty</label>
+              <div className="relative">
+                <input 
+                  type="number" 
+                  value={inventoryForm.totalQuantity} 
+                  onChange={e => setInventoryForm({...inventoryForm, totalQuantity: e.target.value})} 
+                  className="w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-black" 
+                  placeholder="Total cans in system"
+                  required 
+                />
+                <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-black opacity-20 uppercase tracking-widest">CANS</div>
+              </div>
             </div>
-            <div className="flex justify-end">
-              <button 
-                type="submit" 
-                disabled={isSubmitting}
-                className="w-full bg-primary text-white px-8 py-2 rounded-lg font-bold shadow-lg flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                {isSubmitting ? <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div> : <Save size={18} />} 
-                {isSubmitting ? 'Updating...' : 'Update Stock'}
-              </button>
+            <div className="space-y-1">
+              <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Calculated Availability</label>
+              <div className="h-11 flex items-center px-4 bg-primary/5 rounded-xl border border-primary/10">
+                <span className="text-sm font-black text-primary">
+                  {inventory.find(i => i.mccId === inventoryForm.mccId && i.capacity === inventoryForm.capacity)?.availableQuantity || 0} Cans Available
+                </span>
+              </div>
             </div>
           </div>
 
           {inventoryMessage && (
             <div className={cn(
-              "p-3 rounded-lg text-sm font-bold text-center animate-in fade-in zoom-in",
-              inventoryMessage.type === 'success' ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+              "p-4 rounded-xl text-xs font-black text-center uppercase tracking-widest",
+              inventoryMessage.type === 'success' ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700 font-bold normal-case tracking-normal"
             )}>
               {inventoryMessage.text}
             </div>
           )}
 
-          {/* Current Status Display */}
-          {inventoryForm.mccId && (
-            <div className="bg-surface-container-low p-4 rounded-lg border border-outline-variant/10 flex gap-8">
-              <div>
-                <p className="text-[10px] font-bold uppercase opacity-60">Current Stock</p>
-                <p className="text-xl font-black text-primary">
-                  {inventory.find(i => i.mccId === inventoryForm.mccId && i.capacity === inventoryForm.capacity)?.totalQuantity || 0}
-                </p>
-              </div>
-              <div>
-                <p className="text-[10px] font-bold uppercase opacity-60">Current Available</p>
-                <p className="text-xl font-black text-green-600">
-                  {inventory.find(i => i.mccId === inventoryForm.mccId && i.capacity === inventoryForm.capacity)?.availableQuantity || 0}
-                </p>
-              </div>
-              <div className="ml-auto flex items-center text-xs text-on-surface-variant italic">
-                * Available = Stock - (Taken - Returned)
-              </div>
-            </div>
-          )}
+          <div className="flex justify-end gap-3 pt-4 border-t border-outline-variant/10">
+            <button 
+              type="button" 
+              onClick={() => setIsManagingInventory(false)}
+              className="px-8 py-3 rounded-[1.25rem] font-black text-on-surface-variant hover:bg-surface-container-high transition-all uppercase text-[10px] tracking-widest"
+            >
+              Close
+            </button>
+            <button 
+              type="submit" 
+              disabled={isSubmitting}
+              className="bg-primary text-white px-12 py-3 rounded-[1.25rem] font-black shadow-lg shadow-primary/20 hover:shadow-primary/40 transition-all disabled:opacity-50 uppercase text-[10px] tracking-widest flex items-center gap-2"
+            >
+              <Check size={18} />
+              {isSubmitting ? 'Updating...' : 'Update Stock'}
+            </button>
+          </div>
         </form>
-      )}
+      </Modal>
 
       {/* Prominent Summary Banners */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -587,17 +602,40 @@ export default function MilkCans() {
         </div>
       </div>
 
-      {isAdding && (
-        <form onSubmit={handleSubmit} className="bg-white p-6 rounded-xl border border-outline-variant/20 shadow-sm space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Issuing Form Modal */}
+      <Modal
+        isOpen={isAdding}
+        onClose={() => {
+          setIsAdding(false);
+          setEditingId(null);
+          setFormData({ ...formData, sellerId: '', sellerName: '', phone: '', quantity: '1', remarks: '' });
+        }}
+        title={editingId ? "Update Milk Can Record" : "Issue Milk Can to Supplier"}
+        icon={<Milk size={20} />}
+        maxWidth="max-w-4xl"
+      >
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
             <div className="space-y-1">
-              <label className="text-xs font-bold uppercase tracking-wider">MCC</label>
-              <select value={formData.mccId} onChange={e => setFormData({...formData, mccId: e.target.value})} className="w-full bg-surface-container-low border-none rounded-lg text-sm" required>
+              <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">MCC Station</label>
+              <select 
+                value={formData.mccId} 
+                onChange={e => setFormData({...formData, mccId: e.target.value})} 
+                className="w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-black transition-all" 
+                required
+              >
                 {mccs.map(mcc => <option key={mcc.id} value={mcc.id}>{mcc.name}</option>)}
               </select>
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-bold uppercase tracking-wider">Seller</label>
+              <DateInput 
+                value={formData.dateIssued} 
+                onChange={val => setFormData({...formData, dateIssued: val})}
+                label="Date Issued"
+              />
+            </div>
+            <div className="space-y-1 text-xs">
+              <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Seller / Supplier</label>
               <TypeAhead
                 items={sellers.filter(s => (s.mccIds && s.mccIds.includes(formData.mccId)) || !formData.mccId)}
                 onSelect={(seller) => {
@@ -627,51 +665,70 @@ export default function MilkCans() {
               />
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-bold uppercase tracking-wider">Phone</label>
-              <input placeholder="Phone Number" value={formData.phone} readOnly className="w-full bg-surface-container-low border-none rounded-lg text-sm opacity-60" />
+              <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Supplier Phone</label>
+              <input placeholder="---" value={formData.phone} readOnly className="w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-black opacity-40 cursor-not-allowed" />
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-bold uppercase tracking-wider">Capacity</label>
-              <select value={formData.capacity} onChange={e => setFormData({...formData, capacity: e.target.value})} className="w-full bg-surface-container-low border-none rounded-lg text-sm">
+              <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Can Capacity</label>
+              <select value={formData.capacity} onChange={e => setFormData({...formData, capacity: e.target.value})} className="w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-black">
                 <option value="30L">30L</option>
                 <option value="50L">50L</option>
               </select>
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-bold uppercase tracking-wider">Quantity</label>
-              <input type="number" value={formData.quantity} onChange={e => setFormData({...formData, quantity: e.target.value})} className="w-full bg-surface-container-low border-none rounded-lg text-sm" required />
+              <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Quantity Issued</label>
+              <div className="relative">
+                <input 
+                  type="number" 
+                  value={formData.quantity} 
+                  onChange={e => setFormData({...formData, quantity: e.target.value})} 
+                  className="w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-black" 
+                  required 
+                />
+                <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-black opacity-20 uppercase tracking-widest">CANS</div>
+              </div>
             </div>
             <div className="space-y-1">
-              <DateInput 
-                value={formData.dateIssued} 
-                onChange={val => setFormData({...formData, dateIssued: val})}
-                label="Date Issued"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold uppercase tracking-wider">Status</label>
-              <select value={formData.status} onChange={e => setFormData({...formData, status: e.target.value})} className="w-full bg-surface-container-low border-none rounded-lg text-sm">
-                <option value="Taken">Taken</option>
-                <option value="Returned">Returned</option>
+              <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Movement Status</label>
+              <select value={formData.status} onChange={e => setFormData({...formData, status: e.target.value})} className={cn(
+                "w-full bg-surface-container-low border-none rounded-xl text-sm h-11 px-4 font-black transition-colors",
+                formData.status === 'Taken' ? "text-amber-600 bg-amber-50" : "text-green-600 bg-green-50"
+              )}>
+                <option value="Taken">🟠 TAKEN</option>
+                <option value="Returned">🟢 RETURNED</option>
               </select>
             </div>
           </div>
           <div className="space-y-1">
-            <label className="text-xs font-bold uppercase tracking-wider">Remarks</label>
-            <textarea value={formData.remarks} onChange={e => setFormData({...formData, remarks: e.target.value})} className="w-full bg-surface-container-low border-none rounded-lg text-sm" placeholder="Additional notes..." />
+            <label className="text-[10px] font-black uppercase text-on-surface-variant opacity-60 block tracking-widest mb-1.5">Additional Remarks</label>
+            <textarea value={formData.remarks} onChange={e => setFormData({...formData, remarks: e.target.value})} className="w-full bg-surface-container-low border-none rounded-xl text-sm h-20 p-4 font-medium" placeholder="Condition of can upon issue/return..." />
           </div>
-          <div className="flex justify-end gap-4">
-            <button type="submit" className="bg-primary text-white px-8 py-2 rounded-lg font-bold shadow-lg flex items-center gap-2">
-              <Save size={18} /> {editingId ? 'Update Record' : 'Save Record'}
+          <div className="flex justify-end gap-3 pt-4 border-t border-outline-variant/10">
+            <button 
+              type="button" 
+              onClick={() => {
+                setIsAdding(false);
+                setEditingId(null);
+              }}
+              className="px-8 py-3 rounded-[1.25rem] font-black text-on-surface-variant hover:bg-surface-container-high transition-all uppercase text-[10px] tracking-widest"
+            >
+              Cancel
+            </button>
+            <button 
+              type="submit" 
+              className="bg-primary text-white px-12 py-3 rounded-[1.25rem] font-black shadow-lg shadow-primary/20 hover:shadow-primary/40 transition-all uppercase text-[10px] tracking-widest flex items-center gap-2"
+            >
+              <Check size={18} /> {editingId ? 'Update Record' : 'Save Record'}
             </button>
           </div>
         </form>
-      )}
+      </Modal>
 
       <div className="bg-white rounded-xl border border-outline-variant/20 shadow-sm overflow-hidden">
         <table className="w-full text-left">
           <thead className="bg-surface-container-low text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">
             <tr>
+              <th className="px-6 py-3">#</th>
               <th className="px-6 py-3">Date</th>
               <th className="px-6 py-3">MCC</th>
               <th className="px-6 py-3">Seller</th>
@@ -682,8 +739,9 @@ export default function MilkCans() {
             </tr>
           </thead>
           <tbody className="divide-y divide-outline-variant/10">
-            {filteredRecords.sort((a, b) => new Date(b.dateIssued).getTime() - new Date(a.dateIssued).getTime()).map(rec => (
+            {filteredRecords.sort((a, b) => new Date(b.dateIssued).getTime() - new Date(a.dateIssued).getTime()).map((rec, index) => (
               <tr key={rec.id} className="hover:bg-surface-container-lowest transition-colors">
+                <td className="px-6 py-4 text-xs font-bold opacity-40">{index + 1}</td>
                 <td className="px-6 py-4 text-sm">{safeFormat(rec.dateIssued, 'dd/MM/yyyy')}</td>
                 <td className="px-6 py-4 text-sm">{mccs.find(m => m.id === rec.mccId)?.name || 'Unknown'}</td>
                 <td className="px-6 py-4 text-sm">

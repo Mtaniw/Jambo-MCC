@@ -18,7 +18,7 @@ import {
   subDays,
   isWithinInterval
 } from 'date-fns';
-import { getTanzaniaDate, safeFormat } from '../lib/dateUtils';
+import { getTanzaniaDate, safeFormat, getSystemStartMonth } from '../lib/dateUtils';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
@@ -178,22 +178,22 @@ export default function MonthlyReport() {
       r.no,
       `${r.weekLabel} (${r.dateRange})`,
       r.sellers,
-      formatNumber(r.totalLiters, 2),
-      formatNumber(r.paidLiters, 2),
-      formatNumber(r.paidAmount, 0),
-      formatNumber(r.unpaidAmount, 0),
-      formatNumber(r.totalAmount, 0)
+      formatNumber(r.totalLiters, 2, false, true),
+      formatNumber(r.paidLiters, 2, false, true),
+      formatNumber(r.paidAmount, 2, true, true),
+      formatNumber(r.unpaidAmount, 2, true, true),
+      formatNumber(r.totalAmount, 2, true, true)
     ]);
 
     tableData.push([
       '',
       'TOTALS',
       reportData.totals.sellers,
-      formatNumber(reportData.totals.totalLiters, 2),
-      formatNumber(reportData.totals.paidLiters, 2),
-      formatNumber(reportData.totals.paidAmount, 0),
-      formatNumber(reportData.totals.unpaidAmount, 0),
-      formatNumber(reportData.totals.totalAmount, 0)
+      formatNumber(reportData.totals.totalLiters, 2, false, true),
+      formatNumber(reportData.totals.paidLiters, 2, false, true),
+      formatNumber(reportData.totals.paidAmount, 2, true, true),
+      formatNumber(reportData.totals.unpaidAmount, 2, true, true),
+      formatNumber(reportData.totals.totalAmount, 2, true, true)
     ]);
 
     (doc as any).autoTable({
@@ -256,8 +256,16 @@ export default function MonthlyReport() {
             <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant" size={18} />
             <input
               type="month"
+              min={getSystemStartMonth()}
               value={selectedMonth}
-              onChange={(e) => setSelectedMonth(e.target.value)}
+              onChange={(e) => {
+                const minMonth = getSystemStartMonth();
+                if (e.target.value && e.target.value < minMonth) {
+                  setSelectedMonth(minMonth);
+                } else {
+                  setSelectedMonth(e.target.value);
+                }
+              }}
               className="w-full pl-10 pr-4 py-2 bg-surface border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary/20 outline-none"
             />
           </div>
@@ -315,11 +323,11 @@ export default function MonthlyReport() {
                     <span className="block text-[10px] text-on-surface-variant font-normal uppercase tracking-tighter">{row.dateRange}</span>
                   </td>
                   <td className="px-6 py-4 text-sm text-center">{row.sellers}</td>
-                  <td className="px-6 py-4 text-sm text-right font-medium">{formatNumber(row.totalLiters, 2)}</td>
-                  <td className="px-6 py-4 text-sm text-right text-green-600">{formatNumber(row.paidLiters, 2)}</td>
-                  <td className="px-6 py-4 text-sm text-right font-bold">{formatNumber(row.paidAmount, 0)}</td>
-                  <td className="px-6 py-4 text-sm text-right text-red-600">{formatNumber(row.unpaidAmount, 0)}</td>
-                  <td className="px-6 py-4 text-sm text-right font-black text-primary">{formatNumber(row.totalAmount, 0)}</td>
+                  <td className="px-6 py-4 text-sm text-right font-medium">{formatNumber(row.totalLiters, 2, false, true)}</td>
+                  <td className="px-6 py-4 text-sm text-right text-green-600">{formatNumber(row.paidLiters, 2, false, true)}</td>
+                  <td className="px-6 py-4 text-sm text-right font-bold">{formatNumber(row.paidAmount, 2, true, true)}</td>
+                  <td className="px-6 py-4 text-sm text-right text-red-600">{formatNumber(row.unpaidAmount, 2, true, true)}</td>
+                  <td className="px-6 py-4 text-sm text-right font-black text-primary">{formatNumber(row.totalAmount, 2, true, true)}</td>
                 </tr>
               ))}
               {reportData.rows.length === 0 && (
@@ -334,11 +342,11 @@ export default function MonthlyReport() {
               <tr className="font-black text-on-surface">
                 <td colSpan={2} className="px-6 py-4 text-right uppercase tracking-wider text-xs">Monthly Totals</td>
                 <td className="px-6 py-4 text-center">{reportData.totals.sellers}</td>
-                <td className="px-6 py-4 text-right">{formatNumber(reportData.totals.totalLiters, 2)}</td>
-                <td className="px-6 py-4 text-right text-green-600">{formatNumber(reportData.totals.paidLiters, 2)}</td>
-                <td className="px-6 py-4 text-right">{formatNumber(reportData.totals.paidAmount, 0)}</td>
-                <td className="px-6 py-4 text-right text-red-600">{formatNumber(reportData.totals.unpaidAmount, 0)}</td>
-                <td className="px-6 py-4 text-right text-primary text-lg">{formatNumber(reportData.totals.totalAmount, 0)}</td>
+                <td className="px-6 py-4 text-right">{formatNumber(reportData.totals.totalLiters, 2, false, true)}</td>
+                <td className="px-6 py-4 text-right text-green-600">{formatNumber(reportData.totals.paidLiters, 2, false, true)}</td>
+                <td className="px-6 py-4 text-right">{formatNumber(reportData.totals.paidAmount, 2, true, true)}</td>
+                <td className="px-6 py-4 text-right text-red-600">{formatNumber(reportData.totals.unpaidAmount, 2, true, true)}</td>
+                <td className="px-6 py-4 text-right text-primary text-lg">{formatNumber(reportData.totals.totalAmount, 2, true, true)}</td>
               </tr>
             </tfoot>
           </table>

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
-import { doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, updateDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { handleFirestoreError, OperationType } from '../lib/errorHandlers';
 
@@ -61,6 +61,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(firebaseUser);
       setIsAuthReady(true);
       
+      // Force Super User role for the primary admin email
+      if (firebaseUser && firebaseUser.email?.toLowerCase() === 'mtaniwambura@gmail.com') {
+        const profileRef = doc(db, 'users', firebaseUser.uid);
+        try {
+          const docSnap = await getDoc(profileRef);
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            if (data.role !== 'Super User' || data.roleOverride || data.status !== 'active') {
+              await updateDoc(profileRef, {
+                role: 'Super User',
+                roleOverride: null, // Remove any override
+                status: 'active'
+              });
+              console.log('Forced Super User role for admin email');
+            }
+          } else {
+            // First time login for this specific user
+            await setDoc(profileRef, {
+              fullName: firebaseUser.displayName || 'Mtani Mtani',
+              username: 'mtani',
+              role: 'Super User',
+              mccIds: [],
+              status: 'active',
+              email: firebaseUser.email,
+              createdAt: new Date().toISOString()
+            });
+          }
+        } catch (err) {
+          console.error('Error in auth role sync:', err);
+        }
+      }
+
       // Clean up existing profile listener if any
       if (unsubscribeProfile) {
         unsubscribeProfile();
@@ -109,7 +141,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const effectiveRole = profile?.roleOverride || profile?.role || null;
+  const effectiveRole = profile?.email?.toLowerCase() === 'mtaniwambura@gmail.com' 
+    ? 'Super User' 
+    : (profile?.roleOverride || profile?.role || null);
 
   return (
     <AuthContext.Provider value={{ user, profile, effectiveRole, permissions, loading, isAuthReady }}>

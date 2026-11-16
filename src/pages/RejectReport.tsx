@@ -32,6 +32,7 @@ const REJECTION_REASONS: { [key: string]: string } = {
   'T': 'Abnormal Taste or Smell',
   'C': 'High Temperature at Collection',
   'M': 'Mixed / Cross-Contaminated Milk',
+  'R': 'Reserving Tank',
 };
 
 const TEST_CODES = [
@@ -40,6 +41,7 @@ const TEST_CODES = [
   { code: 'MT', name: 'Methylene Blue Reduction Test (MBRT)', standard: '> 30 minutes' },
   { code: 'pH', name: 'pH Strip Test', standard: '6.6 – 6.8' },
   { code: 'ST', name: 'Sensory Test (Smell / Color / Taste)', standard: 'Normal appearance' },
+  { code: 'None', name: 'None', standard: 'N/A' },
 ];
 
 type FilterType = 'day' | 'week' | 'month';
@@ -74,8 +76,9 @@ export default function RejectReport() {
     date: ''
   });
 
-  const isGlobalViewer = profile && ['Super User', 'Admin', 'Factory Clerk', 'Supervisor', 'Manager', 'Director'].includes(effectiveRole as string);
-  const canWrite = profile && (profile.role === 'Admin' || ['Super User', 'Admin', 'Quality Controller', 'Cashier'].includes(effectiveRole as string));
+  const isActualAdmin = profile && (profile.role === 'Admin' || profile.role === 'Super User');
+  const isGlobalViewer = isActualAdmin || (profile && ['Super User', 'Admin', 'Factory Clerk', 'Supervisor', 'Manager', 'Director', 'Quality Controller'].includes(effectiveRole as string));
+  const canWrite = isActualAdmin || (profile && ['Super User', 'Admin', 'Quality Controller', 'Cashier'].includes(effectiveRole as string));
 
   useEffect(() => {
     const unsubscribeMccs = onSnapshot(collection(db, 'mccs'), (snapshot) => {
@@ -97,14 +100,14 @@ export default function RejectReport() {
   }, []);
 
   useEffect(() => {
-    if (!profile || (mccs.length === 0 && !isGlobalViewer)) return;
+    if (!profile) return;
 
-    let q = query(collection(db, 'rejects'), where('date', '>=', startDate), where('date', '<=', endDate));
-    if (!isGlobalViewer && profile?.mccIds?.length > 0) {
-      const mccNames = profile.mccIds.map(id => mccs.find(m => m.id === id)?.name).filter(Boolean);
-      const queryIds = [...profile.mccIds, ...mccNames];
-      q = query(q, where('mccId', 'in', queryIds.slice(0, 10)));
-    }
+    // Direct single field date query
+    const q = query(
+      collection(db, 'rejects'), 
+      where('date', '>=', startDate), 
+      where('date', '<=', endDate)
+    );
     
     const unsubscribeRejects = onSnapshot(q, (snapshot) => {
       setRejects(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
@@ -114,10 +117,22 @@ export default function RejectReport() {
     return () => {
       unsubscribeRejects();
     };
-  }, [profile, mccs, isGlobalViewer, startDate, endDate]);
+  }, [profile, startDate, endDate]);
 
   const reportData = useMemo(() => {
     const filtered = rejects.filter(r => {
+      // Client-side access boundary matches
+      let matchesAccess = true;
+      if (!isGlobalViewer) {
+        if (profile?.mccIds && profile.mccIds.length > 0) {
+          const mccNames = profile.mccIds.map(id => mccs.find(m => m.id === id)?.name).filter(Boolean);
+          const allowedIds = [...profile.mccIds, ...mccNames];
+          matchesAccess = allowedIds.includes(r.mccId) || allowedIds.some(n => r.mccId?.includes(n));
+        } else {
+          matchesAccess = false;
+        }
+      }
+
       const matchesMcc = selectedMccId === 'all' || 
                          r.mccId === selectedMccId || 
                          mccs.find(m => m.id === selectedMccId)?.name === r.mccId;
@@ -127,7 +142,7 @@ export default function RejectReport() {
         (r.sellerName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         reasonText.toLowerCase().includes(searchTerm.toLowerCase());
       
-      return matchesMcc && matchesSearch;
+      return matchesAccess && matchesMcc && matchesSearch;
     });
 
     const rows = filtered.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
@@ -377,7 +392,7 @@ export default function RejectReport() {
                     {canWrite && (
                       <div className="flex items-center justify-end gap-2">
                         <button onClick={() => handleEdit(row)} className="p-1 text-primary hover:bg-blue-50 rounded"><Edit2 size={16} /></button>
-                        <button onClick={() => handleDelete(row.id)} className="p-1 text-error hover:bg-red-50 rounded"><Trash2 size={16} /></button>
+                        {isActualAdmin && <button onClick={() => handleDelete(row.id)} className="p-1 text-error hover:bg-red-50 rounded"><Trash2 size={16} /></button>}
                       </div>
                     )}
                   </td>
@@ -472,11 +487,15 @@ export default function RejectReport() {
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs font-bold uppercase tracking-wider opacity-60">Liters Rejected</label>
-                  <input type="number" value={formData.litersRejected} onChange={e => setFormData({...formData, litersRejected: e.target.value})} className="w-full bg-surface-container-low border-none rounded-lg p-3 text-sm" required />
+                  <input type="number" step="any" value={formData.litersRejected} onChange={e => setFormData({...formData, litersRejected: e.target.value})} className="w-full bg-surface-container-low border-none rounded-lg p-3 text-sm" required />
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs font-bold uppercase tracking-wider opacity-60">Temp (°C)</label>
-                  <input type="number" step="0.1" value={formData.temp} onChange={e => setFormData({...formData, temp: e.target.value})} className="w-full bg-surface-container-low border-none rounded-lg p-3 text-sm" />
+                  <input type="text" inputMode="decimal" value={formData.temp} onChange={e => setFormData({...formData, temp: e.target.value.replace(',', '.')})} className="w-full bg-surface-container-low border-none rounded-lg p-3 text-sm font-bold" />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold uppercase tracking-wider opacity-60">pH / Acidity</label>
+                  <input type="text" inputMode="decimal" value={formData.phAcidity} onChange={e => setFormData({...formData, phAcidity: e.target.value.replace(',', '.')})} className="w-full bg-surface-container-low border-none rounded-lg p-3 text-sm font-bold" />
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs font-bold uppercase tracking-wider opacity-60">Rejection Reason</label>

@@ -11,6 +11,7 @@ interface GlobalSettings {
   logoRed: string;
   logoWhite: string;
   favicon: string;
+  loginBgUrl: string;
 }
 
 const defaultSettings: GlobalSettings = {
@@ -21,7 +22,8 @@ const defaultSettings: GlobalSettings = {
   logoUrl: 'https://lh3.googleusercontent.com/aida/ADBb0uiCdrgZRYj1Imqfwxw4sPIxAsPSjWWx9Pr0aWPDVa5-_Rm1bTwdZ2TLFhW-9ZAB_si9aC0BQ7OWnieEDClcJUNnVYZzCYGEOjCz46Rk3kz9jlvRTOYiGQbxtD6JkkLePDVYyPSa7uVt_Pn-CX089J9DKeBzfM7WtFQYcyTlaKUlN2Wwq8U5CzbopOmTC6RxHGJ2jHxaMWLhsCZWoJszc9TiUnsh8yKObLs_z8gAyDRt_1eCr6CAfRAoctphD9HyqNGn5mbYYfZvzw',
   logoRed: '',
   logoWhite: '',
-  favicon: ''
+  favicon: '',
+  loginBgUrl: 'https://picsum.photos/seed/factory/1920/1080'
 };
 
 export function useSettings() {

@@ -26,6 +26,32 @@ export function getTanzaniaMonthStartStr(): string {
 }
 
 /**
+ * System inception date: March this year (not 2024, because that's when the system was developed).
+ * Returns 'YYYY-03-01'.
+ */
+export function getSystemStartDate(): string {
+  const year = getTanzaniaDate().getFullYear();
+  return `${year}-03-01`;
+}
+
+/**
+ * System inception month: March this year.
+ * Returns 'YYYY-03'.
+ */
+export function getSystemStartMonth(): string {
+  const year = getTanzaniaDate().getFullYear();
+  return `${year}-03`;
+}
+
+/**
+ * System inception date as Date object
+ */
+export function getSystemStartDateObj(): Date {
+  const year = getTanzaniaDate().getFullYear();
+  return new Date(year, 2, 1, 0, 0, 0);
+}
+
+/**
  * Converts a yyyy-MM-dd string to a Date object at start of day in Tanzania time
  */
 export function parseTanzaniaDate(dateStr: string): Date {

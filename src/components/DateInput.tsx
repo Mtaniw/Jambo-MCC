@@ -1,17 +1,28 @@
 import React from 'react';
 import { Calendar } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { safeFormat } from '../lib/dateUtils';
+import { safeFormat, getSystemStartDate } from '../lib/dateUtils';
 
 interface DateInputProps {
   value: string;
   onChange: (value: string) => void;
   label?: string;
   className?: string;
+  min?: string;
+  max?: string;
 }
 
-export function DateInput({ value, onChange, label, className }: DateInputProps) {
+export function DateInput({ value, onChange, label, className, min, max }: DateInputProps) {
   const inputRef = React.useRef<HTMLInputElement>(null);
+  const effectiveMin = min !== undefined ? min : getSystemStartDate();
+
+  const handleDateChange = (val: string) => {
+    if (effectiveMin && val && val < effectiveMin) {
+      onChange(effectiveMin);
+    } else {
+      onChange(val);
+    }
+  };
 
   return (
     <div className={cn("relative flex flex-col gap-0.5 min-w-[120px]", className)}>
@@ -36,8 +47,10 @@ export function DateInput({ value, onChange, label, className }: DateInputProps)
         <input 
           ref={inputRef}
           type="date" 
+          min={effectiveMin}
+          max={max}
           value={value} 
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => handleDateChange(e.target.value)}
           className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-20"
           style={{ appearance: 'none', WebkitAppearance: 'none' }}
         />

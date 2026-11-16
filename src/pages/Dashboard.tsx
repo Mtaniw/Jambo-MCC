@@ -33,7 +33,7 @@ import {
 } from 'lucide-react';
 import { cn, formatNumber } from '../lib/utils';
 import { format, startOfDay, subDays, subMonths, startOfWeek, startOfMonth, eachDayOfInterval, isSameDay, isSameWeek, isSameMonth } from 'date-fns';
-import { safeFormat, getTanzaniaTodayStr, getTanzaniaDate } from '../lib/dateUtils';
+import { safeFormat, getTanzaniaTodayStr, getTanzaniaDate, getSystemStartDate, parseTanzaniaDate } from '../lib/dateUtils';
 import { DateInput } from '../components/DateInput';
 import { 
   BarChart, 
@@ -222,14 +222,18 @@ export default function Dashboard() {
       setStats(prev => ({ ...prev, uniqueSellers: activeCount }));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'sellers'));
 
-    // Fetch Tankers for Stats
+    const mccNames = mccIds.map(id => mccs.find(m => m.id === id)?.name).filter(Boolean);
+    const queryIds = [...mccIds, ...mccNames];
     let allTankersQuery = query(collection(db, 'truck_qa'), where('date', '>=', startDate), where('date', '<=', endDate));
     if (!isGlobalViewer) {
       if (canQuery) {
-        allTankersQuery = query(collection(db, 'truck_qa'), where('mccId', 'in', mccIds), where('date', '>=', startDate), where('date', '<=', endDate));
+        allTankersQuery = query(collection(db, 'truck_qa'), where('mccId', 'in', queryIds.slice(0, 10)), where('date', '>=', startDate), where('date', '<=', endDate));
       }
     } else if (selectedMccId !== 'all') {
-      allTankersQuery = query(collection(db, 'truck_qa'), where('mccId', '==', selectedMccId), where('date', '>=', startDate), where('date', '<=', endDate));
+      const mccName = mccs.find(m => m.id === selectedMccId)?.name;
+      const qIds = [selectedMccId];
+      if (mccName) qIds.push(mccName);
+      allTankersQuery = query(collection(db, 'truck_qa'), where('mccId', 'in', qIds), where('date', '>=', startDate), where('date', '<=', endDate));
     }
 
     const unsubscribeAllTankers = onSnapshot(allTankersQuery, (snapshot) => {
@@ -253,10 +257,13 @@ export default function Dashboard() {
     let tankerQuery = query(collection(db, 'truck_qa'), where('date', '>=', startDate), where('date', '<=', endDate), orderBy('date', 'desc'), limit(5));
     if (!isGlobalViewer) {
       if (canQuery) {
-        tankerQuery = query(collection(db, 'truck_qa'), where('mccId', 'in', mccIds), where('date', '>=', startDate), where('date', '<=', endDate), orderBy('date', 'desc'), limit(5));
+        tankerQuery = query(collection(db, 'truck_qa'), where('mccId', 'in', queryIds.slice(0, 10)), where('date', '>=', startDate), where('date', '<=', endDate), orderBy('date', 'desc'), limit(5));
       }
     } else if (selectedMccId !== 'all') {
-      tankerQuery = query(collection(db, 'truck_qa'), where('mccId', '==', selectedMccId), where('date', '>=', startDate), where('date', '<=', endDate), orderBy('date', 'desc'), limit(5));
+      const mccName = mccs.find(m => m.id === selectedMccId)?.name;
+      const qIds = [selectedMccId];
+      if (mccName) qIds.push(mccName);
+      tankerQuery = query(collection(db, 'truck_qa'), where('mccId', 'in', qIds), where('date', '>=', startDate), where('date', '<=', endDate), orderBy('date', 'desc'), limit(5));
     }
 
     const unsubscribeTankers = onSnapshot(tankerQuery, (snapshot) => {
@@ -502,9 +509,11 @@ export default function Dashboard() {
         });
       }
     } else if (timeframe === 'monthly' || timeframe === 'all') {
-      const monthsToShow = timeframe === 'all' ? 24 : 6; // Show up to 2 years for all-time
+      const systemStart = startOfMonth(parseTanzaniaDate(getSystemStartDate()));
+      const monthsToShow = timeframe === 'all' ? 12 : 6;
       for (let i = monthsToShow - 1; i >= 0; i--) {
         const monthStart = startOfMonth(subMonths(now, i));
+        if (monthStart < systemStart) continue; // Don't show months prior to system development (March this year)
         
         let monthTotal = 0;
         const monthMccData: any = {};
@@ -538,7 +547,7 @@ export default function Dashboard() {
 
 
   const checkWidgetPerm = (name: string) => {
-    if (profile?.role === 'Admin') return true;
+    if (profile?.role === 'Admin' || profile?.role === 'Super User' || effectiveRole === 'Admin' || effectiveRole === 'Super User') return true;
     
     // Check custom user permissions first
     if (profile?.customPermissions?.dashboard) {
@@ -555,30 +564,30 @@ export default function Dashboard() {
   };
 
   const statCards = [
-    { name: timeframe === 'all' ? 'Total Litres (Lifetime)' : timeframe === 'custom' ? 'Litres (Custom Range)' : `Litres (${timeframe})`, value: `${formatNumber(filteredStatsByTimeframe.litres, 2)} L`, icon: Milk, color: 'text-green-600', bg: 'bg-green-50', hide: !checkWidgetPerm('Total Litres') },
-    { name: timeframe === 'all' ? 'Total Sent (Lifetime)' : timeframe === 'custom' ? 'Sent (Custom Range)' : `Sent (${timeframe})`, value: `${formatNumber(stats.totalSent, 2)} L`, icon: Truck, color: 'text-primary', bg: 'bg-primary/5', hide: !checkWidgetPerm('Total Sent') },
-    { name: timeframe === 'all' ? 'Total Received (Lifetime)' : timeframe === 'custom' ? 'Received (Custom Range)' : `Received (${timeframe})`, value: `${formatNumber(stats.totalReceived, 2)} L`, icon: CheckCircle2, color: 'text-green-600', bg: 'bg-green-50', hide: !checkWidgetPerm('Total Received') },
+    { name: timeframe === 'all' ? 'Total Litres (Lifetime)' : timeframe === 'custom' ? 'Litres (Custom Range)' : `Litres (${timeframe})`, value: `${formatNumber(filteredStatsByTimeframe.litres, 2, false, true)} L`, icon: Milk, color: 'text-green-600', bg: 'bg-green-50', hide: !checkWidgetPerm('Total Litres') },
+    { name: timeframe === 'all' ? 'Total Sent (Lifetime)' : timeframe === 'custom' ? 'Sent (Custom Range)' : `Sent (${timeframe})`, value: `${formatNumber(stats.totalSent, 2, false, true)} L`, icon: Truck, color: 'text-primary', bg: 'bg-primary/5', hide: !checkWidgetPerm('Total Sent') },
+    { name: timeframe === 'all' ? 'Total Received (Lifetime)' : timeframe === 'custom' ? 'Received (Custom Range)' : `Received (${timeframe})`, value: `${formatNumber(stats.totalReceived, 2, false, true)} L`, icon: CheckCircle2, color: 'text-green-600', bg: 'bg-green-50', hide: !checkWidgetPerm('Total Received') },
     { 
       name: 'Dispatch Difference', 
-      value: `${(stats.totalReceived - stats.totalSent) > 0 ? '+' : ''}${formatNumber(stats.totalReceived - stats.totalSent, 2)} L`, 
+      value: `${(stats.totalReceived - stats.totalSent) > 0 ? '+' : ''}${formatNumber(stats.totalReceived - stats.totalSent, 2, false, true)} L`, 
       icon: TrendingUp, 
       color: (stats.totalReceived - stats.totalSent) >= 0 ? 'text-green-600' : 'text-red-600', 
       bg: (stats.totalReceived - stats.totalSent) >= 0 ? 'bg-green-50' : 'bg-red-50',
       hide: !checkWidgetPerm('Dispatch Difference')
     },
-    { name: timeframe === 'all' ? 'Total Paid (Lifetime)' : timeframe === 'custom' ? 'Paid (Custom Range)' : `Paid (${timeframe})`, value: `TSh ${formatNumber(filteredStatsByTimeframe.paid, 0)}`, icon: TrendingUp, color: 'text-green-600', bg: 'bg-green-50', hide: !checkWidgetPerm('Total Paid') },
-    { name: timeframe === 'all' ? 'Total Unpaid (Lifetime)' : timeframe === 'custom' ? 'Unpaid (Custom Range)' : `Unpaid (${timeframe})`, value: `TSh ${formatNumber(filteredStatsByTimeframe.unpaid, 0)}`, icon: AlertCircle, color: filteredStatsByTimeframe.unpaid > 0 ? 'text-amber-600' : 'text-on-surface-variant', bg: 'bg-amber-50', hide: !checkWidgetPerm('Total Unpaid') },
-    { name: 'Station Expenses', value: `TSh ${formatNumber(stats.totalExpenses, 0)}`, icon: Receipt, color: 'text-red-600', bg: 'bg-red-50', hide: !checkWidgetPerm('Station Expenses') },
+    { name: timeframe === 'all' ? 'Total Paid (Lifetime)' : timeframe === 'custom' ? 'Paid (Custom Range)' : `Paid (${timeframe})`, value: `TSh ${formatNumber(filteredStatsByTimeframe.paid, 2, true, true)}`, icon: TrendingUp, color: 'text-green-600', bg: 'bg-green-50', hide: !checkWidgetPerm('Total Paid') },
+    { name: timeframe === 'all' ? 'Total Unpaid (Lifetime)' : timeframe === 'custom' ? 'Unpaid (Custom Range)' : `Unpaid (${timeframe})`, value: `TSh ${formatNumber(filteredStatsByTimeframe.unpaid, 2, true, true)}`, icon: AlertCircle, color: filteredStatsByTimeframe.unpaid > 0 ? 'text-amber-600' : 'text-on-surface-variant', bg: 'bg-amber-50', hide: !checkWidgetPerm('Total Unpaid') },
+    { name: 'Station Expenses', value: `TSh ${formatNumber(stats.totalExpenses, 2, true, true)}`, icon: Receipt, color: 'text-red-600', bg: 'bg-red-50', hide: !checkWidgetPerm('Station Expenses') },
     { 
       name: 'Net Balance', 
-      value: `TSh ${formatNumber(stats.netBalance, 0)}`, 
+      value: `TSh ${formatNumber(stats.netBalance, 2, true, true)}`, 
       icon: Wallet, 
       color: stats.netBalance >= 0 ? 'text-green-600' : 'text-red-600', 
       bg: stats.netBalance >= 0 ? 'bg-green-50' : 'bg-red-50', 
       hide: !checkWidgetPerm('Net Balance')
     },
     { name: 'Cans Issued', value: (milkCanStats.issued - milkCanStats.returned).toString(), icon: Milk, color: 'text-orange-600', bg: 'bg-orange-50', hide: !checkWidgetPerm('Cans Issued') },
-    { name: "Total Rejects", value: `${formatNumber(rejectStats.totalLitres, 2)} L`, icon: AlertCircle, color: 'text-red-600', bg: 'bg-red-50', hide: !checkWidgetPerm('Today\'s Rejects') },
+    { name: "Total Rejects", value: `${formatNumber(rejectStats.totalLitres, 2, false, true)} L`, icon: AlertCircle, color: 'text-red-600', bg: 'bg-red-50', hide: !checkWidgetPerm('Today\'s Rejects') },
     { name: 'Active Sellers', value: stats.uniqueSellers, icon: Users, color: 'text-purple-600', bg: 'bg-purple-50', hide: !checkWidgetPerm('Active Sellers') },
   ];
 
@@ -591,8 +600,8 @@ export default function Dashboard() {
       )}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-on-surface">Dashboard Overview</h1>
-          <p className="text-on-surface-variant text-sm">{globalSettings?.systemName || 'Real-time performance metrics for Jambo MCC'}</p>
+          <h1 className="text-3xl md:text-4xl font-black tracking-tight text-on-surface">Dashboard Overview</h1>
+          <p className="text-on-surface-variant font-medium text-sm">{globalSettings?.systemName || 'Real-time performance metrics for Jambo MCC'}</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           {isGlobalViewer && (
@@ -614,7 +623,7 @@ export default function Dashboard() {
                   onClick={() => {
                   setTimeframe(t);
                   if (t === 'all') {
-                    setStartDate('2026-01-01'); // Safe project start date
+                    setStartDate(getSystemStartDate()); // System inception March this year
                     setEndDate(getTanzaniaTodayStr());
                   } else if (t === 'daily') {
                      setStartDate(getTanzaniaTodayStr());
@@ -661,13 +670,13 @@ export default function Dashboard() {
       </div>
 
       {/* Summary Section */}
-      <div className="bg-white p-6 rounded-xl border border-outline-variant/20 shadow-sm transition-all hover:shadow-md">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="p-2 bg-secondary-container/10 rounded-lg text-secondary">
-            <Calendar size={20} />
+      <div className="bg-white p-8 rounded-[2rem] border border-outline-variant/20 shadow-sm transition-all hover:shadow-md">
+        <div className="flex items-center gap-3 mb-8">
+          <div className="p-3 bg-secondary-container/10 rounded-2xl text-secondary">
+            <Calendar size={24} />
           </div>
           <div>
-            <h3 className="font-bold text-on-surface">
+            <h3 className="text-lg font-black tracking-tight text-on-surface">
               {timeframe === 'daily' ? 'Daily Sales Overview' : 
                timeframe === 'weekly' ? 'Weekly Sales Overview' : 
                timeframe === 'monthly' ? 'Monthly Sales Overview' : 
@@ -682,16 +691,16 @@ export default function Dashboard() {
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="flex flex-col">
-            <span className="text-xs font-medium text-on-surface-variant uppercase tracking-wider">Total Liters</span>
-            <span className="text-3xl font-extrabold text-primary">{formatNumber(filteredStatsByTimeframe.litres, 2)} L</span>
+            <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest leading-none mb-2">Total Liters</span>
+            <span className="text-4xl font-black text-primary tracking-tight">{formatNumber(filteredStatsByTimeframe.litres, 2, false, true)} L</span>
           </div>
           <div className="flex flex-col">
-            <span className="text-xs font-medium text-on-surface-variant uppercase tracking-wider">Total Paid</span>
-            <span className="text-3xl font-extrabold text-green-600">TSh {formatNumber(filteredStatsByTimeframe.paid, 0)}</span>
+            <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest leading-none mb-2">Amount Paid</span>
+            <span className="text-4xl font-black text-green-600 tracking-tight">TSh {formatNumber(filteredStatsByTimeframe.paid, 2, true, true)}</span>
           </div>
           <div className="flex flex-col">
-            <span className="text-xs font-medium text-on-surface-variant uppercase tracking-wider">Total Pending</span>
-            <span className="text-3xl font-extrabold text-amber-600">TSh {formatNumber(filteredStatsByTimeframe.unpaid, 0)}</span>
+            <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest leading-none mb-2">Amount Unpaid</span>
+            <span className="text-4xl font-black text-amber-600 tracking-tight">TSh {formatNumber(filteredStatsByTimeframe.unpaid, 2, true, true)}</span>
           </div>
         </div>
       </div>
@@ -699,30 +708,30 @@ export default function Dashboard() {
       {/* Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
         {statCards.filter(stat => !stat.hide).map((stat) => (
-          <div key={stat.name} className="bg-white p-6 rounded-xl border border-outline-variant/20 shadow-sm hover:shadow-md transition-shadow">
+          <div key={stat.name} className="bg-white p-6 rounded-3xl border border-outline-variant/20 shadow-sm hover:shadow-md transition-shadow">
             <div className="flex items-center justify-between mb-4">
-              <div className={cn("p-2 rounded-lg", stat.bg)}>
+              <div className={cn("p-3 rounded-2xl", stat.bg)}>
                 <stat.icon className={stat.color} size={20} />
               </div>
               <ArrowUpRight size={16} className="text-on-surface-variant opacity-40" />
             </div>
-            <p className="text-xs font-medium text-on-surface-variant uppercase tracking-wider">{stat.name}</p>
-            <p className={cn("text-xl font-bold mt-1", stat.color)}>{stat.value}</p>
+            <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest leading-none mb-2">{stat.name}</p>
+            <p className={cn("text-2xl font-black tracking-tight", stat.color)}>{stat.value}</p>
           </div>
         ))}
       </div>
 
       {/* Performance Chart */}
       {checkWidgetPerm('MCC Performance') && (
-        <div className="bg-white p-6 rounded-xl border border-outline-variant/20 shadow-sm">
+        <div className="bg-white p-8 rounded-[2rem] border border-outline-variant/20 shadow-sm">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-primary/10 rounded-lg text-primary">
-                <BarChart3 size={20} />
+              <div className="p-3 bg-primary/10 rounded-2xl text-primary">
+                <BarChart3 size={24} />
               </div>
               <div>
-                <h3 className="font-bold text-on-surface">MCC Performance</h3>
-                <p className="text-xs text-on-surface-variant">Milk collection trends across the network</p>
+                <h3 className="text-xl font-black tracking-tight text-on-surface">MCC Performance</h3>
+                <p className="text-xs font-medium text-on-surface-variant">Milk collection trends across the network</p>
               </div>
             </div>
           </div>
@@ -806,39 +815,39 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Recent Activity */}
         {checkWidgetPerm('Recent Milk Intake') && (
-          <div className="lg:col-span-2 bg-white rounded-xl border border-outline-variant/20 shadow-sm overflow-hidden">
-            <div className="px-6 py-4 border-b border-outline-variant/20 flex items-center justify-between">
-              <h3 className="font-bold text-on-surface">Recent Milk Intake</h3>
+          <div className="lg:col-span-2 bg-white rounded-[2rem] border border-outline-variant/20 shadow-sm overflow-hidden">
+            <div className="px-8 py-6 border-b border-outline-variant/20 flex items-center justify-between">
+              <h3 className="font-black text-lg tracking-tight text-on-surface">Recent Milk Intake</h3>
               <button 
                 onClick={() => navigate(`/daily-register?mccId=${selectedMccId}`)}
-                className="text-xs font-bold text-primary hover:underline"
+                className="text-xs font-black text-primary hover:underline bg-primary/5 px-3 py-1.5 rounded-full"
               >
                 View All
               </button>
             </div>
-            <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+            <div className="overflow-x-auto max-h-[400px] overflow-y-auto custom-scrollbar-light">
               <table className="w-full text-left">
-                <thead className="bg-surface-container-low text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">
+                <thead className="bg-surface-container-low text-[10px] uppercase tracking-widest text-on-surface-variant font-black">
                   <tr>
-                    <th className="px-6 py-3">Date</th>
-                    <th className="px-6 py-3">Seller Name</th>
-                    <th className="px-6 py-3">Quantity</th>
-                    <th className="px-6 py-3">Amount</th>
-                    <th className="px-6 py-3">Status</th>
+                    <th className="px-8 py-4">Date</th>
+                    <th className="px-8 py-4">Seller Name</th>
+                    <th className="px-8 py-4">Quantity</th>
+                    <th className="px-8 py-4">Amount</th>
+                    <th className="px-8 py-4">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-outline-variant/10">
                   {recentEntries.map((entry) => (
-                    <tr key={entry.id} className="hover:bg-surface-container-lowest transition-colors">
-                      <td className="px-6 py-4 text-sm">{safeFormat(entry.date, 'dd/MM/yyyy')}</td>
-                      <td className="px-6 py-4 text-sm font-medium">
-                        {entry.manualSellerName || sellers.find(s => s.id === entry.sellerId)?.name || entry.sellerId}
+                    <tr key={entry.id} className="hover:bg-primary/5 transition-colors">
+                      <td className="px-8 py-4 text-xs font-medium">{safeFormat(entry.date, 'dd/MM/yyyy')}</td>
+                      <td className="px-8 py-4 text-sm font-black">
+                        {entry.manualSellerName || sellers.find(s => s.id === entry.sellerId)?.name || entry.sellerId || 'Unknown'}
                       </td>
-                      <td className="px-6 py-4 text-sm">{entry.quantity} {entry.unit}</td>
-                      <td className="px-6 py-4 text-sm font-bold">TSh {formatNumber(entry.quantity * entry.pricePerUnit, 0)}</td>
-                      <td className="px-6 py-4">
+                      <td className="px-8 py-4 text-sm font-bold">{formatNumber(entry.quantity, 2, false, true)} {entry.unit}</td>
+                      <td className="px-8 py-4 text-sm font-black text-primary">TSh {formatNumber(entry.quantity * entry.pricePerUnit, 2, true, true)}</td>
+                      <td className="px-8 py-4">
                         <span className={cn(
-                          "px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-tighter",
+                          "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-tight",
                           entry.status === 'PAID' ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"
                         )}>
                           {entry.status}
@@ -848,7 +857,7 @@ export default function Dashboard() {
                   ))}
                   {recentEntries.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="px-6 py-10 text-center text-on-surface-variant italic">No recent entries found</td>
+                      <td colSpan={5} className="px-8 py-12 text-center text-on-surface-variant italic font-medium">No recent entries found</td>
                     </tr>
                   )}
                 </tbody>
@@ -859,66 +868,66 @@ export default function Dashboard() {
 
         {/* MCC Status */}
         {checkWidgetPerm('MCC Network Status') && (
-          <div className="bg-white rounded-xl border border-outline-variant/20 shadow-sm p-6">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="font-bold text-on-surface">Recent Tanker Movements</h3>
+          <div className="bg-white rounded-[2rem] border border-outline-variant/20 shadow-sm p-8">
+            <div className="flex items-center justify-between mb-8">
+              <h3 className="font-black text-lg tracking-tight text-on-surface">Recent Tanker Movements</h3>
               <button 
                 onClick={() => navigate('/factory-intake')}
-                className="text-[10px] font-bold text-primary hover:underline bg-primary/5 px-2 py-1 rounded-full"
+                className="text-[10px] font-black text-primary hover:underline bg-primary/5 px-3 py-1.5 rounded-full uppercase tracking-wider"
               >
-                View All dispatches
+                Dispatches
               </button>
             </div>
             <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
               {recentTankers.map((tanker) => (
-                <div key={tanker.id} className="flex flex-col gap-2 p-3 rounded-lg bg-surface-container-low hover:bg-surface-container-high/50 transition-all border border-transparent hover:border-outline-variant/30">
+                <div key={tanker.id} className="flex flex-col gap-2 p-4 rounded-2xl bg-surface-container-low hover:bg-surface-container-high/50 transition-all border border-transparent hover:border-outline-variant/30 group">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                       <Truck size={14} className="text-secondary" />
+                       <Truck size={16} className="text-primary group-hover:scale-110 transition-transform" />
                        <span className="text-sm font-black">{tanker.truckReg}</span>
                     </div>
                     <span className={cn(
-                      "text-[10px] font-black uppercase px-2 py-0.5 rounded-full",
-                      tanker.factoryStatus === 'Received' ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"
+                      "text-[9px] font-black uppercase px-2.5 py-1 rounded-full tracking-wide",
+                      tanker.factoryStatus === 'Received' ? "bg-green-100 text-green-700" : "bg-primary text-white"
                     )}>
                       {tanker.factoryStatus || 'In Transit'}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between text-[10px] text-on-surface-variant font-medium">
+                  <div className="flex items-center justify-between text-[11px] text-on-surface font-bold">
                     <span>{mccs.find(m => m.id === tanker.mccId)?.name || 'Unknown MCC'}</span>
-                    <span className="font-bold">{formatNumber(tanker.litresLoaded, 0)} L</span>
+                    <span className="font-black text-primary">{formatNumber(tanker.litresLoaded, 2, false, true)} L</span>
                   </div>
-                  <div className="flex justify-between items-center text-[10px] opacity-60">
-                    <span>Dispatched: {safeFormat(tanker.date)}</span>
+                  <div className="flex justify-between items-center text-[10px] font-medium opacity-60">
+                    <span>Sent: {safeFormat(tanker.date)}</span>
                     {tanker.receivedAt && (
-                      <span className="text-green-600 font-bold">Received: {safeFormat(tanker.receivedAt)}</span>
+                      <span className="text-green-600 font-bold">Rec: {safeFormat(tanker.receivedAt)}</span>
                     )}
                   </div>
                 </div>
               ))}
               {recentTankers.length === 0 && (
-                <div className="text-center py-10 opacity-40 italic text-sm">No recent movements</div>
+                <div className="text-center py-12 opacity-40 italic text-sm font-medium">No recent movements</div>
               )}
             </div>
             
-            <div className="mt-8 pt-6 border-t border-outline-variant/20">
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="font-bold text-on-surface">MCC Network Status</h3>
-                <span className="text-[10px] font-bold text-primary bg-primary/10 px-2 py-1 rounded-full">{mccs.length} Total</span>
+            <div className="mt-8 pt-8 border-t border-outline-variant/20">
+              <div className="flex items-center justify-between mb-8">
+                <h3 className="font-black text-lg tracking-tight text-on-surface">MCC Network Status</h3>
+                <span className="text-[10px] font-black text-primary bg-primary/10 px-3 py-1 rounded-full uppercase tracking-wider">{mccs.length} Total</span>
               </div>
               <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
                 {mccs.map((mcc) => (
-                  <div key={mcc.id} className="flex items-center justify-between p-3 rounded-lg bg-surface-container-low hover:bg-surface-container-low/80 transition-colors">
+                  <div key={mcc.id} className="flex items-center justify-between p-4 rounded-2xl bg-surface-container-low hover:bg-surface-container-high/40 transition-colors group">
                     <div className="flex items-center gap-3">
                       <div className={cn(
-                        "w-2 h-2 rounded-full",
+                        "w-2.5 h-2.5 rounded-full ring-4 ring-white/50",
                         mcc.status === 'Active' ? 'bg-green-500' : 
                         mcc.status === 'Closed' ? 'bg-red-500' :
-                        mcc.status === 'Coming Soon' ? 'bg-amber-500' : 'bg-blue-500'
+                        mcc.status === 'Coming Soon' ? 'bg-amber-500' : 'bg-primary'
                       )}></div>
-                      <span className="text-sm font-medium">{mcc.name}</span>
+                      <span className="text-sm font-black group-hover:text-primary transition-colors">{mcc.name}</span>
                     </div>
-                    <span className="text-[10px] font-bold uppercase opacity-60">{mcc.status}</span>
+                    <span className="text-[10px] font-black uppercase opacity-60 tracking-wider font-mono">{mcc.status}</span>
                   </div>
                 ))}
               </div>

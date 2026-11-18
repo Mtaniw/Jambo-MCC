@@ -536,8 +536,8 @@ export default function Admin() {
     <div className="space-y-8 pb-10">
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-4xl font-black text-on-surface tracking-tighter">Admin Control Panel</h1>
-          <p className="text-on-surface-variant font-medium mt-1">Manage users, collection centers, and supplier directory</p>
+          <h1 className="text-2xl sm:text-4xl font-black text-on-surface tracking-tighter">Admin Control Panel</h1>
+          <p className="text-sm sm:text-base text-on-surface-variant font-medium mt-1">Manage users, collection centers, and supplier directory</p>
         </div>
         {/* Logo removed as requested */}
       </div>
@@ -555,7 +555,7 @@ export default function Admin() {
             key={tab.id}
             onClick={() => handleTabChange(tab.id)}
             className={cn(
-              "flex items-center gap-2 px-6 py-3 font-black text-xs uppercase tracking-widest transition-all rounded-xl",
+              "flex items-center gap-2 px-4 sm:px-6 py-2.5 sm:py-3 font-black text-xs uppercase tracking-widest transition-all rounded-xl whitespace-nowrap shrink-0",
               activeTab === tab.id 
                 ? "bg-white text-primary shadow-sm" 
                 : "text-on-surface-variant hover:bg-white/50 hover:text-on-surface"

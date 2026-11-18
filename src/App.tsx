@@ -29,7 +29,7 @@ const MilkCansIssuedReport = lazy(() => import('./pages/MilkCansIssuedReport'));
 
 function LoadingScreen() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-surface">
+    <div className="min-h-dvh flex items-center justify-center bg-surface">
       <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
     </div>
   );
@@ -43,12 +43,12 @@ function PrivateRoute({ children, roles, pageName }: { children: React.ReactNode
   }
 
   if (!user) {
-    return <Navigate to="/login" />;
+    return <Navigate to="/login" replace />;
   }
 
   if (profile?.status === 'pending' && profile.email?.toLowerCase() !== 'mtaniwambura@gmail.com') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-surface p-6 text-center">
+      <div className="min-h-dvh flex items-center justify-center bg-surface p-6 text-center">
         <div className="max-w-md bg-white p-8 rounded-xl shadow-lg border border-outline-variant/20">
           <h2 className="text-2xl font-bold text-primary mb-4">Account Pending Approval</h2>
           <p className="text-on-surface-variant">Your account is pending approval by an administrator. You will be notified once approved.</p>
@@ -63,21 +63,26 @@ function PrivateRoute({ children, roles, pageName }: { children: React.ReactNode
     return <Layout>{children}</Layout>;
   }
 
+  // Always allow Home as the safe landing/fallback route
+  if (pageName === 'Home') {
+    return <Layout>{children}</Layout>;
+  }
+
   // Check custom user permissions first
   if (profile?.customPermissions?.pages && pageName) {
     const hasCustomPerm = profile.customPermissions.pages[pageName];
-    if (hasCustomPerm === false) return <Navigate to="/" />;
+    if (hasCustomPerm === false) return <Navigate to="/" replace />;
     if (hasCustomPerm === true) return <Layout>{children}</Layout>;
   }
 
   // Check granular role-based permissions
   if (permissions && effectiveRole && pageName && permissions[effectiveRole]) {
     const hasPerm = permissions[effectiveRole].pages?.[pageName];
-    if (hasPerm === false) return <Navigate to="/" />;
+    if (hasPerm === false) return <Navigate to="/" replace />;
   }
 
   if (roles && effectiveRole && !roles.includes(effectiveRole)) {
-    return <Navigate to="/" />;
+    return <Navigate to="/" replace />;
   }
 
   return <Layout>{children}</Layout>;

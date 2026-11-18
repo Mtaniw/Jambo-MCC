@@ -122,7 +122,7 @@ export default function Sellers() {
 
       {/* Filters- Branded rounded-2xl */}
       <div className="bg-white p-6 rounded-[2rem] border border-outline-variant/20 shadow-sm flex flex-wrap gap-6 items-end">
-        <div className="flex-1 min-w-[280px]">
+        <div className="flex-1 min-w-0 w-full sm:min-w-[240px]">
           <label className="text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant mb-2 block ml-1">Search Sellers</label>
           <div className="relative">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant" size={20} />

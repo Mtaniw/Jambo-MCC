@@ -14,6 +14,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../hooks/useAuth';
+import { useSettings } from '../hooks/useSettings';
 import { useNavigate, Link } from 'react-router-dom';
 import { handleFirestoreError, OperationType } from '../lib/errorHandlers';
 import { 
@@ -101,7 +102,7 @@ export default function Dashboard() {
   const [startDate, setStartDate] = useState<string>(format(startOfMonth(getTanzaniaDate()), 'yyyy-MM-dd'));
   const [endDate, setEndDate] = useState<string>(getTanzaniaTodayStr());
   const [loading, setLoading] = useState(true);
-  const [globalSettings, setGlobalSettings] = useState<any>(null);
+  const { settings: globalSettings } = useSettings();
 
   const todayStr = getTanzaniaTodayStr();
 
@@ -170,13 +171,6 @@ export default function Dashboard() {
   }, [allEntries, timeframe, startDate, endDate]);
 
   const isGlobalViewer = profile && ['Super User', 'Admin', 'Factory Clerk', 'Supervisor', 'Manager', 'Director'].includes(effectiveRole as string);
-
-  useEffect(() => {
-    const unsub = onSnapshot(doc(db, 'settings', 'global_config'), (snap) => {
-      if (snap.exists()) setGlobalSettings(snap.data());
-    }, (error) => handleFirestoreError(error, OperationType.GET, 'settings/global_config'));
-    return () => unsub();
-  }, []);
 
   useEffect(() => {
     if (!profile) return;
@@ -646,7 +640,7 @@ export default function Dashboard() {
               ))}
             </div>
 
-            <div className="flex items-center gap-2 bg-surface-container-low p-1 rounded-lg border border-outline-variant/30">
+            <div className="flex flex-wrap items-center gap-2 bg-surface-container-low p-1 rounded-lg border border-outline-variant/30">
               <DateInput 
                 value={startDate} 
                 onChange={val => {
@@ -655,7 +649,7 @@ export default function Dashboard() {
                 }}
                 label="From"
               />
-              <div className="w-px h-8 bg-outline-variant/30 self-end mb-1"></div>
+              <div className="hidden sm:block w-px h-8 bg-outline-variant/30 self-end mb-1"></div>
               <DateInput 
                 value={endDate} 
                 onChange={val => {
@@ -670,9 +664,9 @@ export default function Dashboard() {
       </div>
 
       {/* Summary Section */}
-      <div className="bg-white p-8 rounded-[2rem] border border-outline-variant/20 shadow-sm transition-all hover:shadow-md">
-        <div className="flex items-center gap-3 mb-8">
-          <div className="p-3 bg-secondary-container/10 rounded-2xl text-secondary">
+      <div className="bg-white p-5 sm:p-8 rounded-3xl sm:rounded-[2rem] border border-outline-variant/20 shadow-sm transition-all hover:shadow-md">
+        <div className="flex items-center gap-3 mb-6 sm:mb-8">
+          <div className="p-3 bg-amber-50 rounded-2xl text-amber-600">
             <Calendar size={24} />
           </div>
           <div>
@@ -689,18 +683,18 @@ export default function Dashboard() {
             </p>
           </div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="flex flex-col">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 sm:gap-6">
+          <div className="flex flex-col min-w-0">
             <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest leading-none mb-2">Total Liters</span>
-            <span className="text-4xl font-black text-primary tracking-tight">{formatNumber(filteredStatsByTimeframe.litres, 2, false, true)} L</span>
+            <span className="text-2xl sm:text-3xl xl:text-4xl font-black text-primary tracking-tight break-words">{formatNumber(filteredStatsByTimeframe.litres, 2, false, true)} L</span>
           </div>
-          <div className="flex flex-col">
+          <div className="flex flex-col min-w-0">
             <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest leading-none mb-2">Amount Paid</span>
-            <span className="text-4xl font-black text-green-600 tracking-tight">TSh {formatNumber(filteredStatsByTimeframe.paid, 2, true, true)}</span>
+            <span className="text-2xl sm:text-3xl xl:text-4xl font-black text-green-600 tracking-tight break-words">TSh {formatNumber(filteredStatsByTimeframe.paid, 2, true, true)}</span>
           </div>
-          <div className="flex flex-col">
+          <div className="flex flex-col min-w-0">
             <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest leading-none mb-2">Amount Unpaid</span>
-            <span className="text-4xl font-black text-amber-600 tracking-tight">TSh {formatNumber(filteredStatsByTimeframe.unpaid, 2, true, true)}</span>
+            <span className="text-2xl sm:text-3xl xl:text-4xl font-black text-amber-600 tracking-tight break-words">TSh {formatNumber(filteredStatsByTimeframe.unpaid, 2, true, true)}</span>
           </div>
         </div>
       </div>
@@ -792,7 +786,7 @@ export default function Dashboard() {
                       fillOpacity={1} 
                       fill={`url(#color-${mcc.id})`} 
                       stackId="1"
-                      animationDuration={1500}
+                      animationDuration={400}
                     />
                   ))
                 ) : (
@@ -803,7 +797,7 @@ export default function Dashboard() {
                     strokeWidth={3}
                     fillOpacity={1} 
                     fill="url(#colorTotal)" 
-                    animationDuration={1500}
+                    animationDuration={400}
                   />
                 )}
               </AreaChart>

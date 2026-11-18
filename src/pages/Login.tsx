@@ -2,13 +2,15 @@ import React, { useState, useMemo } from 'react';
 import { signInWithPopup, GoogleAuthProvider, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc, getDocs, query, collection, limit } from 'firebase/firestore';
 import { auth, db } from '../firebase';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Navigate } from 'react-router-dom';
 import { LogIn, UserPlus, ShieldCheck, AlertCircle, CheckCircle2, Info, Eye, EyeOff } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { Logo } from '../components/Logo';
 import { useSettings } from '../hooks/useSettings';
+import { useAuth } from '../hooks/useAuth';
 
 export default function Login() {
+  const { user, isAuthReady } = useAuth();
   const { settings } = useSettings();
   const [isRegistering, setIsRegistering] = useState(false);
   const [showForgotPassword, setShowForgotPassword] = useState(false);
@@ -187,8 +189,12 @@ export default function Login() {
     }
   };
 
+  if (isAuthReady && user) {
+    return <Navigate to="/" replace />;
+  }
+
   return (
-    <div className="min-h-screen bg-surface flex items-center justify-center relative overflow-hidden p-2 sm:p-4">
+    <div className="min-h-dvh bg-surface flex items-center justify-center relative overflow-hidden p-2 sm:p-4">
       {/* Background Split */}
       <div className="absolute inset-0 z-0 flex flex-col md:flex-row">
         <div className="w-full md:w-1/2 bg-gradient-to-br from-primary via-primary-container to-primary-fixed-dim">

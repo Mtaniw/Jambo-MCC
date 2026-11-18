@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
 
-interface GlobalSettings {
+export interface GlobalSettings {
   milkPrice: number;
   systemName: string;
   companyName: string;
@@ -13,6 +13,8 @@ interface GlobalSettings {
   favicon: string;
   loginBgUrl: string;
 }
+
+const SETTINGS_CACHE_KEY = 'jambo_global_settings_v1';
 
 const defaultSettings: GlobalSettings = {
   milkPrice: 1200,
@@ -26,22 +28,75 @@ const defaultSettings: GlobalSettings = {
   loginBgUrl: 'https://picsum.photos/seed/factory/1920/1080'
 };
 
+function readCachedSettings(): GlobalSettings {
+  try {
+    const raw = localStorage.getItem(SETTINGS_CACHE_KEY);
+    if (raw) {
+      return { ...defaultSettings, ...JSON.parse(raw) };
+    }
+  } catch {
+    // Ignore storage read errors
+  }
+  return defaultSettings;
+}
+
+let sharedSettings: GlobalSettings = readCachedSettings();
+let sharedLoaded = false;
+let subscriberCount = 0;
+let unsubscribeFirestore: (() => void) | null = null;
+const listeners = new Set<(s: GlobalSettings, loaded: boolean) => void>();
+
+function ensureSettingsSubscription() {
+  if (unsubscribeFirestore) return;
+  unsubscribeFirestore = onSnapshot(
+    doc(db, 'settings', 'global_config'),
+    (snapshot) => {
+      if (snapshot.exists()) {
+        sharedSettings = { ...defaultSettings, ...snapshot.data() } as GlobalSettings;
+        try {
+          localStorage.setItem(SETTINGS_CACHE_KEY, JSON.stringify(sharedSettings));
+        } catch {
+          // Ignore storage quota errors
+        }
+      }
+      sharedLoaded = true;
+      listeners.forEach((fn) => fn(sharedSettings, true));
+    },
+    (error) => {
+      console.error('Error fetching settings:', error);
+      sharedLoaded = true;
+      listeners.forEach((fn) => fn(sharedSettings, true));
+    }
+  );
+}
+
 export function useSettings() {
-  const [settings, setSettings] = useState<GlobalSettings>(defaultSettings);
-  const [loading, setLoading] = useState(true);
+  const [settings, setSettings] = useState<GlobalSettings>(sharedSettings);
+  const [loading, setLoading] = useState(!sharedLoaded);
 
   useEffect(() => {
-    const unsubscribe = onSnapshot(doc(db, 'settings', 'global_config'), (snapshot) => {
-      if (snapshot.exists()) {
-        setSettings({ ...defaultSettings, ...snapshot.data() } as GlobalSettings);
-      }
-      setLoading(false);
-    }, (error) => {
-      console.error("Error fetching settings:", error);
-      setLoading(false);
-    });
+    const listener = (next: GlobalSettings, loaded: boolean) => {
+      setSettings(next);
+      setLoading(!loaded);
+    };
 
-    return () => unsubscribe();
+    listeners.add(listener);
+    subscriberCount += 1;
+    ensureSettingsSubscription();
+
+    // Sync immediately in case sharedSettings updated between render and effect
+    setSettings(sharedSettings);
+    if (sharedLoaded) setLoading(false);
+
+    return () => {
+      listeners.delete(listener);
+      subscriberCount -= 1;
+      if (subscriberCount <= 0 && unsubscribeFirestore) {
+        unsubscribeFirestore();
+        unsubscribeFirestore = null;
+        subscriberCount = 0;
+      }
+    };
   }, []);
 
   return { settings, loading };

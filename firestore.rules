@@ -46,14 +46,28 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
+    function userDocExists() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function userDocData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function userRoleLower() {
+      return userDocData().get('role', '') is string ? userDocData().get('role', '').lower() : '';
+    }
+
+    function userRoleOverrideLower() {
+      return userDocData().get('roleOverride', '') is string ? userDocData().get('roleOverride', '').lower() : '';
+    }
+
     function isAdmin() {
       return isAuthenticated() && (
-        request.auth.token.email.lower() == "mtaniwambura@gmail.com" ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.lower() == 'admin' ||
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.lower() == 'super user' ||
-          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('roleOverride', '').lower() == 'admin') ||
-          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('roleOverride', '').lower() == 'super user')
+        ('email' in request.auth.token && request.auth.token.email is string && request.auth.token.email.lower() == "mtaniwambura@gmail.com") ||
+        (userDocExists() && (
+          userRoleLower() in ['admin', 'super user'] ||
+          userRoleOverrideLower() in ['admin', 'super user']
         ))
       );
     }
@@ -61,9 +75,9 @@ service cloud.firestore {
     function hasRole(role) {
       return isAuthenticated() && (
         isAdmin() || (
-          exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
-            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.lower() == role.lower() ||
-            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('roleOverride', '').lower() == role.lower()
+          userDocExists() && (
+            userRoleLower() == role.lower() ||
+            userRoleOverrideLower() == role.lower()
           )
         )
       );
@@ -72,9 +86,9 @@ service cloud.firestore {
     function hasAnyRole(roles) {
       return isAuthenticated() && (
         isAdmin() || (
-          exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
-            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.lower() in roles ||
-            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('roleOverride', '').lower() in roles
+          userDocExists() && (
+            userRoleLower() in roles ||
+            userRoleOverrideLower() in roles
           )
         )
       );
@@ -83,10 +97,10 @@ service cloud.firestore {
     function isAssignedToMCC(mccId) {
       return isAuthenticated() && (
         isAdmin() || 
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
-          mccId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.mccIds || 
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.lower() in ['viewer', 'supervisor', 'manager', 'director'] ||
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('roleOverride', '').lower() in ['viewer', 'supervisor', 'manager', 'director']
+        (userDocExists() && (
+          (userDocData().get('mccIds', []) is list && mccId in userDocData().get('mccIds', [])) || 
+          userRoleLower() in ['viewer', 'supervisor', 'manager', 'director'] ||
+          userRoleOverrideLower() in ['viewer', 'supervisor', 'manager', 'director']
         ))
       );
     }
@@ -172,9 +186,25 @@ service cloud.firestore {
       allow write: if isAuthenticated() && request.auth.uid == userId;
     }
 
+    function isValidPublicStats(data) {
+      return data.keys().hasAll(['activeFarmers', 'activeMccs', 'dailyLitersHq', 'updatedAt']) &&
+        data.keys().hasOnly(['activeFarmers', 'activeMccs', 'dailyLitersHq', 'updatedAt']) &&
+        data.activeFarmers is number && data.activeFarmers >= 0 && data.activeFarmers <= 10000000 &&
+        data.activeMccs is number && data.activeMccs >= 0 && data.activeMccs <= 10000 &&
+        data.dailyLitersHq is number && data.dailyLitersHq >= 0 && data.dailyLitersHq <= 100000000 &&
+        isValidString(data.updatedAt, 10, 64);
+    }
+
+    match /settings/public_stats {
+      allow read: if true;
+      allow create, update: if hasAnyRole(['cashier', 'grader', 'supervisor', 'quality controller', 'factory clerk', 'manager', 'director', 'admin', 'super user']) &&
+        isValidPublicStats(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
     match /settings/{settingId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow write: if isAdmin() && settingId != 'public_stats';
     }
 
     function isValidReceipt(data) {
@@ -210,6 +240,23 @@ service cloud.firestore {
           request.resource.data.data.size() <= 900000;
         allow delete: if hasAnyRole(['cashier', 'grader', 'quality controller', 'supervisor', 'factory clerk', 'admin', 'super user', 'manager', 'director']);
       }
+    }
+
+    function isValidWholesaleInquiry(data) {
+      return data.keys().hasAll(['businessName', 'contactName', 'phoneOrEmail', 'productFocus', 'status', 'createdAt']) &&
+        data.keys().hasOnly(['businessName', 'contactName', 'phoneOrEmail', 'productFocus', 'region', 'status', 'createdAt']) &&
+        isValidString(data.businessName, 2, 150) &&
+        isValidString(data.contactName, 2, 120) &&
+        isValidString(data.phoneOrEmail, 5, 150) &&
+        isValidString(data.productFocus, 2, 120) &&
+        (!('region' in data) || isValidString(data.region, 0, 120)) &&
+        data.status == 'New' &&
+        isValidString(data.createdAt, 10, 64);
+    }
+
+    match /wholesale_inquiries/{inquiryId} {
+      allow create: if isValidWholesaleInquiry(request.resource.data);
+      allow read, update, delete: if isAdmin();
     }
 
     // Default deny

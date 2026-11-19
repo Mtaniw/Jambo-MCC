@@ -98,7 +98,7 @@ export default function App() {
           <Suspense fallback={<LoadingScreen />}>
             <Routes>
               <Route path="/login" element={<Login />} />
-              <Route path="/" element={<PrivateRoute pageName="Home"><Home /></PrivateRoute>} />
+              <Route path="/" element={<Home />} />
               <Route path="/dashboard" element={<PrivateRoute pageName="Dashboard"><Dashboard /></PrivateRoute>} />
               <Route path="/daily-register" element={<PrivateRoute pageName="Daily Register" roles={['Super User', 'Admin', 'Cashier', 'Quality Controller', 'Supervisor', 'Viewer']}><DailyRegister /></PrivateRoute>} />
               <Route path="/expenses" element={<PrivateRoute pageName="Expenses" roles={['Super User', 'Admin', 'Cashier', 'Supervisor', 'Viewer']}><Expenses /></PrivateRoute>} />

@@ -5,6 +5,7 @@ import { useAuth } from '../hooks/useAuth';
 import { Plus, Trash2, Edit2, Search, Filter, Users, Phone, MapPin, Tag, X, Check, Loader2 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/errorHandlers';
+import { syncPublicStatsToFirestore } from '../lib/syncPublicStats';
 import { Modal } from '../components/Modal';
 
 export default function Sellers() {
@@ -73,6 +74,7 @@ export default function Sellers() {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       });
+      syncPublicStatsToFirestore({ force: true });
       setIsAdding(false);
       setFormData({ name: '', phone: '', location: '', category: 'Farmer', mccIds: [], active: true });
     } catch (error) {
@@ -88,6 +90,7 @@ export default function Sellers() {
         ...selectedSeller,
         updatedAt: new Date().toISOString()
       });
+      syncPublicStatsToFirestore({ force: true });
       setSelectedSeller(null);
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, 'sellers');
@@ -98,6 +101,7 @@ export default function Sellers() {
     if (!window.confirm('Are you sure you want to delete this seller?')) return;
     try {
       await deleteDoc(doc(db, 'sellers', id));
+      syncPublicStatsToFirestore({ force: true });
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, 'sellers');
     }

@@ -10,7 +10,7 @@ import { useSettings } from '../hooks/useSettings';
 import { useAuth } from '../hooks/useAuth';
 
 export default function Login() {
-  const { user, isAuthReady } = useAuth();
+  const { user, isAuthReady, effectiveRole } = useAuth();
   const { settings } = useSettings();
   const [isRegistering, setIsRegistering] = useState(false);
   const [showForgotPassword, setShowForgotPassword] = useState(false);
@@ -99,7 +99,7 @@ export default function Login() {
       if (isFirstAdmin) {
         navigate('/admin');
       } else {
-        navigate('/');
+        navigate('/dashboard');
       }
     } catch (err: any) {
       setError(getFriendlyErrorMessage(err));
@@ -158,7 +158,7 @@ export default function Login() {
           if (docSnap.exists() && (docSnap.data().role === 'Super User' || docSnap.data().role === 'Admin')) {
             navigate('/admin');
           } else {
-            navigate('/');
+            navigate('/dashboard');
           }
         }
       }
@@ -190,7 +190,8 @@ export default function Login() {
   };
 
   if (isAuthReady && user) {
-    return <Navigate to="/" replace />;
+    const portalTarget = effectiveRole === 'Super User' || effectiveRole === 'Admin' ? '/admin' : '/dashboard';
+    return <Navigate to={portalTarget} replace />;
   }
 
   return (
@@ -198,10 +199,12 @@ export default function Login() {
       {/* Background Split */}
       <div className="absolute inset-0 z-0 flex flex-col md:flex-row">
         <div className="w-full md:w-1/2 bg-gradient-to-br from-primary via-primary-container to-primary-fixed-dim">
-          <div 
-            className="h-full w-full opacity-20 bg-cover bg-center" 
-            style={{ backgroundImage: `url('${settings.loginBgUrl || "https://picsum.photos/seed/factory/1920/1080"}')` }}
-          ></div>
+          {settings.loginBgUrl && !settings.loginBgUrl.includes('picsum.photos') && (
+            <div 
+              className="h-full w-full opacity-20 bg-cover bg-center" 
+              style={{ backgroundImage: `url('${settings.loginBgUrl}')` }}
+            ></div>
+          )}
         </div>
         <div className="hidden md:block md:w-1/2 bg-surface-container-low"></div>
       </div>

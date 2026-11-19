@@ -7,8 +7,12 @@
       "properties": {
         "name": { "type": "string" },
         "location": { "type": "string" },
+        "region": { "type": "string" },
+        "district": { "type": "string" },
+        "hours": { "type": "string" },
+        "phone": { "type": "string" },
         "startupDate": { "type": "string", "format": "date" },
-        "status": { "type": "string", "enum": ["Active", "Coming Soon", "Planned", "Inactive"] },
+        "status": { "type": "string", "enum": ["Active", "Coming Soon", "Planned", "Inactive", "Closed"] },
         "manager": { "type": "string" },
         "cashier": { "type": "string" }
       },
@@ -231,6 +235,33 @@
         "data": { "type": "string" }
       },
       "required": ["index", "data"]
+    },
+    "WholesaleInquiry": {
+      "title": "WholesaleInquiry",
+      "description": "Public wholesale or distributor inquiry submitted from homepage",
+      "type": "object",
+      "properties": {
+        "businessName": { "type": "string", "maxLength": 150 },
+        "contactName": { "type": "string", "maxLength": 120 },
+        "phoneOrEmail": { "type": "string", "maxLength": 150 },
+        "productFocus": { "type": "string", "maxLength": 120 },
+        "region": { "type": "string", "maxLength": 120 },
+        "status": { "type": "string", "enum": ["New", "Contacted", "Resolved"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["businessName", "contactName", "phoneOrEmail", "productFocus", "status", "createdAt"]
+    },
+    "PublicStats": {
+      "title": "PublicStats",
+      "description": "Auto-synced live homepage metrics aggregated from Firestore collections",
+      "type": "object",
+      "properties": {
+        "activeFarmers": { "type": "number" },
+        "activeMccs": { "type": "number" },
+        "dailyLitersHq": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["activeFarmers", "activeMccs", "dailyLitersHq", "updatedAt"]
     }
   },
   "firestore": {
@@ -285,6 +316,14 @@
     "/receipts/{receiptId}/chunks/{chunkId}": {
       "schema": "ReceiptChunk",
       "description": "Chunked segments for large receipt attachments"
+    },
+    "/wholesale_inquiries/{inquiryId}": {
+      "schema": "WholesaleInquiry",
+      "description": "Wholesale and distributor inquiries submitted via public homepage"
+    },
+    "/settings/public_stats": {
+      "schema": "PublicStats",
+      "description": "Automatically synced public homepage key figures"
     },
     "presence": {
       "schema": { "$ref": "presence" },

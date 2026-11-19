@@ -4,6 +4,7 @@ import { db } from '../firebase';
 import { useAuth } from '../hooks/useAuth';
 import { useSearchParams } from 'react-router-dom';
 import { handleFirestoreError, OperationType } from '../lib/errorHandlers';
+import { syncPublicStatsToFirestore } from '../lib/syncPublicStats';
 import { Plus, Search, Filter, Download, Trash2, Edit2, Check, X, FileText, Table as TableIcon, FileDown, AlertCircle, Loader2, Calendar, History, Upload, ChevronDown, TrendingUp, TrendingDown, Phone } from 'lucide-react';
 import { cn, formatNumber } from '../lib/utils';
 import { format, isWithinInterval, startOfDay, endOfDay, startOfWeek, startOfMonth } from 'date-fns';
@@ -277,6 +278,7 @@ export default function DailyRegister() {
       return { previousEntries };
     },
     onSuccess: () => {
+      syncPublicStatsToFirestore({ force: true });
       setSuccess(editingId ? "Record updated successfully!" : "Record saved successfully!");
       setIsAdding(false);
       setEditingId(null);
@@ -320,6 +322,7 @@ export default function DailyRegister() {
       return { previousEntries };
     },
     onSuccess: (_, variables) => {
+      syncPublicStatsToFirestore({ force: true });
       setSuccess(`${variables.ids.length} records processed successfully!`);
       setSelectedIds([]);
       setTimeout(() => setSuccess(null), 3000);
@@ -346,6 +349,7 @@ export default function DailyRegister() {
       return { previousEntries };
     },
     onSuccess: () => {
+      syncPublicStatsToFirestore({ force: true });
       setSuccess("Record deleted successfully!");
       setTimeout(() => setSuccess(null), 3000);
     },
@@ -628,6 +632,7 @@ export default function DailyRegister() {
       });
     }
     await batch.commit();
+    syncPublicStatsToFirestore({ force: true });
     queryClient.invalidateQueries({ queryKey });
   };
 

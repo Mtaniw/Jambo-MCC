@@ -17,6 +17,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useSettings } from '../hooks/useSettings';
 import { useNavigate, Link } from 'react-router-dom';
 import { handleFirestoreError, OperationType } from '../lib/errorHandlers';
+import { syncPublicStatsToFirestore } from '../lib/syncPublicStats';
 import { 
   Milk, 
   TrendingUp, 
@@ -179,6 +180,8 @@ export default function Dashboard() {
     const unsubscribeMccs = onSnapshot(collection(db, 'mccs'), (snapshot) => {
       setMccs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'mccs'));
+
+    syncPublicStatsToFirestore();
 
     return () => {
       unsubscribeMccs();

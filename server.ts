@@ -79,15 +79,24 @@ async function startServer() {
     });
   } else {
     console.log("Initializing Vite dev middleware...");
-    const vite = await createViteServer({
-      server: { 
+    const vitePromise = createViteServer({
+      server: {
         middlewareMode: true,
         hmr: false,
+        ws: false,
         watch: null, // Disable file watching to prevent HMR-related overhead
       },
       appType: "spa",
     });
-    app.use(vite.middlewares);
+
+    app.use(async (req, res, next) => {
+      try {
+        const vite = await vitePromise;
+        vite.middlewares(req, res, next);
+      } catch (err) {
+        next(err);
+      }
+    });
   }
 
   app.listen(PORT, "0.0.0.0", () => {
